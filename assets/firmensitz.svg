@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 420" role="img" aria-label="Zeichnung: Firmensitz der Lindner Bürowelt am Mainufer">
+<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dbe8f6"/><stop offset="1" stop-color="#f4f8fc"/></linearGradient></defs>
+<rect width="800" height="420" fill="url(#s)"/>
+<circle cx="660" cy="80" r="34" fill="#fbe3c8"/>
+<path d="M0 300 Q200 270 400 292 T800 286 V420 H0z" fill="#c9dcc4"/>
+<path d="M0 360 Q200 345 400 356 T800 350 V420 H0z" fill="#9fc3e6"/>
+<path d="M0 380 Q200 368 400 378 T800 372" fill="none" stroke="#fff" stroke-width="3" opacity=".6"/>
+<rect x="150" y="150" width="330" height="170" fill="#1F3A5F"/>
+<rect x="480" y="200" width="190" height="120" fill="#2c5183"/>
+<rect x="150" y="138" width="330" height="14" fill="#152a46"/>
+<rect x="480" y="190" width="190" height="12" fill="#1F3A5F"/>
+<g fill="#cfe1f3"><rect x="172" y="172" width="44" height="30"/><rect x="230" y="172" width="44" height="30"/><rect x="288" y="172" width="44" height="30"/><rect x="346" y="172" width="44" height="30"/><rect x="404" y="172" width="44" height="30"/>
+<rect x="172" y="218" width="44" height="30"/><rect x="230" y="218" width="44" height="30"/><rect x="288" y="218" width="44" height="30"/><rect x="346" y="218" width="44" height="30"/><rect x="404" y="218" width="44" height="30"/></g>
+<rect x="498" y="224" width="154" height="96" fill="#eaf2fb"/>
+<path d="M549 224v96M601 224v96" stroke="#2c5183" stroke-width="4"/>
+<rect x="290" y="268" width="50" height="52" fill="#E8833A"/>
+<rect x="498" y="204" width="154" height="16" fill="#E8833A"/>
+<text x="575" y="216" font-family="Arial,Helvetica,sans-serif" font-size="11" font-weight="700" text-anchor="middle" fill="#fff">SHOWROOM</text>
+<text x="315" y="128" font-family="Arial,Helvetica,sans-serif" font-size="22" font-weight="700" text-anchor="middle" fill="#1F3A5F">LINDNER BÜROWELT</text>
+<g fill="#7fae7a"><circle cx="90" cy="282" r="30"/><circle cx="720" cy="270" r="34"/><circle cx="755" cy="290" r="22"/></g>
+<g fill="#6b5a45"><rect x="87" y="300" width="6" height="22"/><rect x="717" y="292" width="6" height="26"/></g>
+</svg>
