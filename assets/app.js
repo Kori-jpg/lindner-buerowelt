@@ -167,10 +167,10 @@
     { r: 'aktuelles', n: 'Aktuelles', k: 'Aktuelles', i: 'news' },
     { r: 'arbeitsplatz', n: 'Mein Arbeitsplatz', k: 'Arbeit', i: 'briefcase' },
     { r: 'wissen', n: 'Wissen & Vorlagen', k: 'Wissen', i: 'book' },
-    { r: 'kollegen', n: 'Kolleginnen & Kollegen', k: 'Team', i: 'users' },
+    { r: 'unternehmen', n: 'Unternehmen', k: 'Lindner', i: 'building' },
     { r: 'akademie', n: 'Akademie', k: 'Akademie', i: 'cap' }
   ];
-  var SECTION = { mail: 'arbeitsplatz', tool: 'arbeitsplatz', doc: 'arbeitsplatz', news: 'aktuelles', postfach: 'arbeitsplatz', app: 'arbeitsplatz', m: 'arbeitsplatz', wiki: 'wissen', person: 'kollegen', unternehmen: 'kollegen' };
+  var SECTION = { mail: 'arbeitsplatz', tool: 'arbeitsplatz', doc: 'arbeitsplatz', news: 'aktuelles', postfach: 'arbeitsplatz', app: 'arbeitsplatz', m: 'arbeitsplatz', wiki: 'wissen', person: 'unternehmen', kollegen: 'unternehmen', lindner: 'unternehmen' };
   function navLinks(sec, short) {
     var open = badgeCount();
     return NAV.map(function (it) {
@@ -936,21 +936,20 @@
       var f = norm(q), hits = SH.personen.filter(function (p) { return (!cur || p.abt === cur) && (!f || norm(pname(p) + ' ' + p.fn + ' ' + abt(p.abt).name).indexOf(f) >= 0); });
       add(list, hits.length ? hits.map(function (p) { return personRow(p); }) : h('p', { class: 'muted' }, 'Niemand gefunden.'));
     }
-    add(app, [head('Kolleginnen & Kollegen', SH.personen.length + ' Beschäftigte in ' + (SH.abteilungen.length - 2) + ' Abteilungen'),
+    add(app, [crumb([['Unternehmen', '#/unternehmen'], ['Kolleginnen & Kollegen']]), head('Kolleginnen & Kollegen', SH.personen.length + ' Beschäftigte in ' + (SH.abteilungen.length - 2) + ' Abteilungen'),
       h('div', { class: 'orgchart' }, SH.abteilungen.map(function (a) {
         var l = person(a.leitung), n = SH.personen.filter(function (p) { return p.abt === a.id; }).length;
         return h('button', { type: 'button', class: 'orgbox a-' + a.id, onclick: function () { cur = a.id; draw(); list.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('b', null, a.name), h('span', null, (a.id === 'az' ? 'Ausbilder: ' : a.id === 'gf' ? '' : 'Leitung: ') + pname(l)), h('span', { class: 'small' }, n + (n === 1 ? ' Person' : ' Personen')));
       })),
       inp, chips, list,
-      h('p', { class: 'small muted' }, icon('shield'), ' Der Status zeigt nur, ob jemand erreichbar ist. Den Grund einer Abwesenheit sieht hier niemand: Das sind persönliche Daten, die nur die Personalabteilung kennen darf.'),
-      h('a', { class: 'btn sec', href: '#/unternehmen' }, 'Über das Unternehmen')]);
+      h('p', { class: 'small muted' }, icon('shield'), ' Der Status zeigt nur, ob jemand erreichbar ist. Den Grund einer Abwesenheit sieht hier niemand: Das sind persönliche Daten, die nur die Personalabteilung kennen darf.')]);
     draw();
   }
   function viewPerson(nr) {
     var p = person(nr);
     if (!p) { location.hash = '#/kollegen'; return; }
     var a = abt(p.abt), chef = person(a.leitung);
-    add(app, [crumb([['Kolleginnen & Kollegen', '#/kollegen'], [a.name, '#/kollegen/' + a.id], [pname(p)]]),
+    add(app, [crumb([['Unternehmen', '#/unternehmen'], ['Kolleginnen & Kollegen', '#/kollegen'], [a.name, '#/kollegen/' + a.id], [pname(p)]]),
       h('div', { class: 'card profile' }, avatar(p, 'xl'),
         h('div', null, h('h1', null, pname(p)), h('p', { class: 'muted' }, p.fn), h('span', { class: 'st st-' + p.st }, STATUS[p.st])),
         h('dl', { class: 'facts' },
@@ -964,19 +963,31 @@
     if (team.length) add(app, section('Im selben Team', null, h('div', { class: 'card list' }, team.map(function (x) { return personRow(x); }))));
   }
   function viewUnternehmen() {
-    var F = SH.firma;
-    add(app, [crumb([['Kolleginnen & Kollegen', '#/kollegen'], ['Unternehmen']]),
+    var F = SH.firma, L = F.leitbild, gf = L && L.zitat && person(L.zitat.von);
+    var nAbt = SH.abteilungen.filter(function (a) { return a.id !== 'gf' && a.id !== 'az'; }).length;
+    add(app, [head('Unternehmen', F.name),
       h('div', { class: 'card' },
-        h('img', { src: 'assets/logo_farbig.png', alt: F.name, style: 'max-width:320px;width:100%;display:block;margin:0 auto 10px' }),
-        h('div', { class: 'stats' }, F.facts.map(function (f) { return h('div', { class: 'stat' }, h('b', null, f[0]), h('span', null, f[1])); })),
-        h('p', { class: 'muted small', style: 'text-align:center;margin:0' }, 'Leitbild: „' + F.claim + '“')),
+        h('img', { src: 'assets/logo_farbig.png', alt: F.name, style: 'max-width:300px;width:100%;display:block;margin:0 auto 6px' }),
+        h('div', { class: 'stats' }, F.facts.map(function (f) { return h('div', { class: 'stat' }, h('b', null, f[0]), h('span', null, f[1])); }))),
+      h('div', { class: 'card list' },
+        h('a', { class: 'lrow', href: '#/kollegen' }, h('span', { class: 'lrow-i' }, icon('users')), h('span', { class: 'lrow-t' }, h('b', null, 'Kolleginnen & Kollegen'), h('span', null, SH.personen.length + ' Beschäftigte in ' + nAbt + ' Abteilungen, Organigramm und Steckbriefe')), icon('chevron')),
+        h('a', { class: 'lrow', href: '#regeln', onclick: function (e) { e.preventDefault(); var el = document.getElementById('u-regeln'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, h('span', { class: 'lrow-i' }, icon('clock')), h('span', { class: 'lrow-t' }, h('b', null, 'So arbeiten wir bei Lindner'), h('span', null, 'Arbeitszeit, Urlaub, mobiles Arbeiten, Betriebsrat')), icon('chevron'))),
+      L ? h('section', { class: 'lb', 'aria-labelledby': 'lb-h' },
+        h('span', { class: 'lb-tag', id: 'lb-h' }, 'Unser Leitbild'),
+        h('p', { class: 'lb-claim' }, F.claim),
+        h('p', { class: 'lb-intro' }, L.intro),
+        h('div', { class: 'lb-werte' }, L.werte.map(function (w, i) {
+          return h('div', { class: 'lb-wert' }, h('span', { class: 'lb-ic' }, icon(w.i)), h('div', null, h('h3', null, w.t), h('p', null, w.x)));
+        })),
+        L.zitat ? h('figure', { class: 'lb-zitat' }, h('blockquote', null, '„' + L.zitat.x + '“'),
+          h('figcaption', null, gf ? avatar(gf) : null, h('span', null, h('b', null, gf ? pname(gf) : ''), gf ? h('span', null, gf.fn) : null))) : null)
+        : h('p', { class: 'muted small', style: 'text-align:center' }, 'Leitbild: „' + F.claim + '“'),
       h('div', { class: 'grid' },
         h('div', { class: 'card' }, h('h2', null, 'Steckbrief'), ul(F.steckbrief)),
         h('div', { class: 'card' }, h('h2', null, 'Unser Sortiment'), ul(F.sortiment)),
         h('div', { class: 'card' }, h('h2', null, 'Unsere Kunden'), ul(F.kunden)),
         h('div', { class: 'card' }, h('h2', null, 'Wichtige Geschäftspartner'), ul(F.partner))),
-      h('div', { class: 'card' }, h('h2', null, 'So arbeiten wir bei Lindner'), ul(F.regeln)),
-      h('a', { class: 'btn sec', href: '#/kollegen' }, 'Zum Personenverzeichnis')]);
+      h('div', { class: 'card', id: 'u-regeln' }, h('h2', null, 'So arbeiten wir bei Lindner'), ul(F.regeln))]);
   }
 
   /* ---------- Akademie ---------- */
