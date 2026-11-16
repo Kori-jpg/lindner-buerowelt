@@ -83,9 +83,11 @@
     chart: 'M4 20V4M4 20h16M8 16v-4M12 16V8M16 16v-6',
     lock: 'M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3',
     logout: 'M10 4H5v16h5M14 8l4 4-4 4M9 12h9',
-    shield: 'M12 3l8 3v6c0 4.5-3.2 8-8 9-4.800-1-8-4.500-8-9V6z',
-    check: 'M5 12.5l4.500 4.500L19 7.500',
+    shield: 'M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z',
+    check: 'M5 12.5l4.5 4.5L19 7.5',
     chevron: 'M9 6l6 6-6 6',
+    folder: 'M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z',
+    key: 'M8 15a4 4 0 1 1 3.5-6H21v3h-2v3h-3v-3h-4.5A4 4 0 0 1 8 15z',
     cards: 'M4 7h12v13H4zM8 4h12v13'
   };
   ICONS.handshake = ICONS.briefcase;
@@ -118,7 +120,12 @@
     }
     return next();
   }
-  function setBundle(data) { bundle = data; SH = data ? data.shared : null; }
+  function setBundle(data) {
+    bundle = data; SH = data ? data.shared : null;
+    if (!data) return;
+    ['mails', 'chat', 'ablage', 'tools', 'news', 'termine', 'units'].forEach(function (k) { if (!bundle[k]) bundle[k] = []; });
+    bundle._applied = {};
+  }
 
   /* ---------- Lernstand (nur lokal) ---------- */
   function pkey() { return 'lb_p_' + bundle.id; }
@@ -126,8 +133,9 @@
   function setDone(modId, idx, pts, max) { var p = prog(); var k = modId + ':' + idx; var old = p.done[k]; if (!old || pts >= old.pts) p.done[k] = { pts: pts, max: max }; LS.set(pkey(), p); }
   function isDone(modId, idx) { return !!prog().done[modId + ':' + idx]; }
   function modProgress(m) { var p = prog(), n = 0; m.steps.forEach(function (s, i) { if (p.done[m.id + ':' + i]) n++; }); return n / m.steps.length; }
+  function badgeCount() { return openTasks().length + unreadMails().length + unreadChat(); }
   function totalPoints() { var p = prog(), t = 0, k; for (k in p.done) t += p.done[k].pts || 0; return t; }
-  function locked(m) { return m.ab && Date.now() < Date.parse(m.ab); }
+  function locked(m) { return !bundle.lehrer && m.ab && Date.now() < Date.parse(m.ab); }
   function mod(id) { return bundle.modules.filter(function (x) { return x.id === id; })[0]; }
   function openTasks() { return bundle.modules.filter(function (m) { return !locked(m) && modProgress(m) < 1; }); }
   function seenNews() { return LS.get('ln_news_' + bundle.id, {}); }
@@ -162,9 +170,9 @@
     { r: 'kollegen', n: 'Kolleginnen & Kollegen', k: 'Team', i: 'users' },
     { r: 'akademie', n: 'Akademie', k: 'Akademie', i: 'cap' }
   ];
-  var SECTION = { news: 'aktuelles', postfach: 'arbeitsplatz', app: 'arbeitsplatz', m: 'arbeitsplatz', wiki: 'wissen', person: 'kollegen', unternehmen: 'kollegen' };
+  var SECTION = { mail: 'arbeitsplatz', tool: 'arbeitsplatz', doc: 'arbeitsplatz', news: 'aktuelles', postfach: 'arbeitsplatz', app: 'arbeitsplatz', m: 'arbeitsplatz', wiki: 'wissen', person: 'kollegen', unternehmen: 'kollegen' };
   function navLinks(sec, short) {
-    var open = openTasks().length;
+    var open = badgeCount();
     return NAV.map(function (it) {
       var on = it.r === sec;
       return h('a', { href: '#/' + it.r, class: on ? 'on' : null, 'aria-current': on ? 'page' : null },
@@ -205,6 +213,11 @@
     if (!bundle) { renderChrome(''); app.textContent = ''; viewLogin(); window.scrollTo(0, 0); return; }
     renderChrome(route);
     app.textContent = '';
+    document.body.classList.toggle('lehrer', !!bundle.lehrer);
+    document.body.classList.toggle('beamer', !!(bundle.lehrer && LS.get('ln_beamer', 0)));
+    if (bundle.lehrer) add(app, h('div', { class: 'lbar' }, h('span', null, icon('key'), h('b', null, 'Lehrermodus'), ' · alle Inhalte sichtbar'),
+      h('button', { type: 'button', class: 'chip', onclick: function () { LS.set('ln_beamer', LS.get('ln_beamer', 0) ? 0 : 1); go(); } }, LS.get('ln_beamer', 0) ? 'Normale Schrift' : 'Beamer-Schrift'),
+      h('button', { type: 'button', class: 'chip', onclick: endLehrer }, 'Beenden')));
     switch (parts[0]) {
       case 'aktuelles': viewAktuelles(); break;
       case 'news': viewNews(parts[1]); break;
@@ -222,6 +235,9 @@
       case 'suche': viewSuche(decodeURIComponent(route.slice(6))); break;
       case 'datenschutz': viewDatenschutz(); break;
       case 'ich': viewIch(); break;
+      case 'mail': viewMail(parts[1]); break;
+      case 'tool': viewTool(parts[1]); break;
+      case 'doc': viewDoc(parts[1]); break;
       default: viewStart();
     }
     window.scrollTo(0, 0);
@@ -245,7 +261,7 @@
       unlock(input.value).then(function (data) {
         btn.disabled = false; btn.textContent = 'Anmelden';
         if (!data) { add(msg, h('p', { class: 'msg bad' }, 'Dieser Code passt nicht. Bitte prüfe die Schreibweise oder frage deine Lehrkraft.')); return; }
-        setBundle(data); LS.set('lb_code', normCode(input.value)); location.hash = '#/'; go();
+        setBundle(data); LS.set('lb_code', normCode(input.value)); location.hash = '#/'; loadUnits().then(go);
       });
     } }, input, btn);
     add(app, h('div', { class: 'login' },
@@ -276,10 +292,11 @@
       opt.ab ? h('span', { class: 'tile-ab' }, 'ab ' + opt.ab) : null);
   }
   function roleTiles() {
-    var open = openTasks().length;
+    var open = openTasks().length + unreadMails().length;
     return bundle.apps.map(function (a) {
       var n = 0;
       if (a.id === 'postfach') n = open;
+      else if (a.id === 'chat') n = unreadChat();
       else (a.mods || []).forEach(function (id) { var m = mod(id); if (m && !locked(m) && modProgress(m) < 1) n++; });
       return tile(a.id === 'postfach' ? '#/postfach' : '#/app/' + a.id, a.name, a.icon, a.farbe, { ab: a.ab, badge: n });
     });
@@ -324,15 +341,16 @@
   /* ---------- Start ---------- */
   function viewStart() {
     var hr = new Date().getHours(), gruss = hr < 11 ? 'Guten Morgen!' : hr < 17 ? 'Guten Tag!' : 'Guten Abend!';
-    var open = openTasks(), chef = person(bundle.user.chef), gfp = person(SH.gf.von);
+    var open = inbox().filter(function (x) { return x.neu; }), chef = person(bundle.user.chef), gfp = person(SH.gf.von);
     var heute = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     add(app, h('section', { class: 'greet' },
       h('div', null, h('p', { class: 'greet-d' }, heute), h('h1', null, gruss),
-        h('p', null, open.length ? (open.length === 1 ? 'Du hast 1 offenen Auftrag.' : 'Du hast ' + open.length + ' offene Aufträge.') : 'Alle Aufträge sind erledigt. Stark!', ' ', bundle.user.hinweis)),
-      open.length ? h('div', { class: 'greet-tasks' }, open.slice(0, 2).map(function (m) {
-        var meta = (bundle.post || {})[m.id] || {};
-        return h('a', { href: '#/m/' + m.id }, icon('mail'), h('span', null, h('b', null, meta.betreff || m.title), h('span', null, 'von ' + (meta.von ? pname(person(meta.von)) : pname(chef)))), icon('chevron'));
+        h('p', null, open.length ? (open.length === 1 ? 'Du hast 1 neue Nachricht oder offenen Auftrag.' : 'Du hast ' + open.length + ' neue Nachrichten und offene Aufträge.') : 'Alles erledigt. Stark!', ' ', bundle.user.hinweis)),
+      open.length ? h('div', { class: 'greet-tasks' }, open.slice(0, 3).map(function (x) {
+        return h('a', { href: x.href }, icon('mail'), h('span', null, h('b', null, x.betreff), h('span', null, 'von ' + (x.von ? pname(person(x.von)) : pname(chef)))), icon('chevron'));
       })) : null));
+    if (unreadChat()) add(app, h('a', { class: 'chatping', href: '#/app/chat' }, avatar(person(bundle.chat[0].mit), 'sm'), h('span', null, h('b', null, pname(person(bundle.chat[0].mit)) + ' im Chat'), h('span', null, lastMsg().x)), h('span', { class: 'badge' }, String(unreadChat()))));
+    add(app, codeBox());
 
     if (!LS.get('ln_tour', 0)) {
       var tour = h('section', { class: 'tour' }, h('h2', null, 'Neu im LindnerNet? So findest du dich zurecht'),
@@ -349,7 +367,7 @@
       h('div', { class: 'gf-b' }, h('div', { class: 'kicker' }, 'Aus der Geschäftsführung'), h('h2', null, SH.gf.titel), h('p', null, SH.gf.text),
         h('a', { class: 'gf-a', href: '#/person/' + gfp.nr }, avatar(gfp, 'sm'), h('span', null, h('b', null, pname(gfp)), ' · ' + gfp.fn)))));
 
-    add(app, section('Aktuelles', ['Alle News', '#/aktuelles'], h('div', { class: 'ngrid' }, SH.news.slice(0, 3).map(function (n) { return newsCard(n); }))));
+    add(app, section('Aktuelles', ['Alle News', '#/aktuelles'], h('div', { class: 'ngrid' }, allNews().slice(0, 3).map(function (n) { return newsCard(n); }))));
     add(app, section('Meine Apps', ['Mein Arbeitsplatz', '#/arbeitsplatz'], h('div', { class: 'tiles' }, roleTiles())));
     add(app, section('Lindner allgemein', null, h('div', { class: 'tiles' }, sharedTiles())));
 
@@ -364,11 +382,11 @@
   /* ---------- Aktuelles ---------- */
   function viewAktuelles() {
     add(app, head('Aktuelles', 'Neuigkeiten und Termine aus dem Haus'));
-    add(app, h('div', { class: 'ngrid two' }, SH.news.map(function (n, i) { return newsCard(n, i === 0); })));
+    add(app, h('div', { class: 'ngrid two' }, allNews().map(function (n, i) { return newsCard(n, i === 0); })));
     add(app, section('Kalender', null, h('div', { class: 'card', id: 'kalender' }, eventList(0))));
   }
   function viewNews(id) {
-    var n = SH.news.filter(function (x) { return x.id === id; })[0];
+    var n = allNews().filter(function (x) { return x.id === id; })[0];
     if (!n) { location.hash = '#/aktuelles'; return; }
     markNews(id);
     var von = person(n.von);
@@ -382,14 +400,17 @@
   /* ---------- Mein Arbeitsplatz ---------- */
   function viewArbeitsplatz() {
     add(app, head('Mein Arbeitsplatz', bundle.user.stelle + ' · ' + abt(bundle.user.abt).name));
-    add(app, section('Postfach', ['Alle Aufträge', '#/postfach'], h('div', { class: 'card list' }, bundle.modules.slice().reverse().map(taskRow))));
+    add(app, section('Postfach', ['Alle Nachrichten', '#/postfach'], h('div', { class: 'card list' }, inboxRows())));
     add(app, section('Meine Apps', null, h('div', { class: 'tiles' }, roleTiles())));
+    var tl = visibleTools();
+    if (tl.length) add(app, section('Werkzeuge', null, h('div', { class: 'card list' }, tl.map(toolRow))));
+    add(app, codeBox());
     add(app, h('p', { class: 'small muted' }, 'Graue Apps werden im Lauf des Schuljahres freigeschaltet. Die Kalenderwoche (KW) steht darunter.'));
   }
   function viewPostfach() {
     var a = appDef('postfach');
     add(app, [crumb([['Mein Arbeitsplatz', '#/arbeitsplatz'], [a.name]]), head(a.name, a.info),
-      h('div', { class: 'card list' }, bundle.modules.slice().reverse().map(taskRow))]);
+      h('div', { class: 'card list' }, inboxRows()), codeBox()]);
   }
   function wikiFor(modIds) {
     return (bundle.wiki || []).filter(function (w) { var m = mod(w.m); return m && !locked(m) && (!modIds || modIds.indexOf(w.m) >= 0); });
@@ -402,6 +423,7 @@
     var a = appDef(id);
     if (!a) { location.hash = '#/arbeitsplatz'; return; }
     if (a.id === 'postfach') { location.hash = '#/postfach'; return; }
+    if (a.id === 'chat' || a.id === 'ablage') { add(app, crumb([['Mein Arbeitsplatz', '#/arbeitsplatz'], [a.name]])); (a.id === 'chat' ? viewChat : viewAblage)(a); return; }
     add(app, [crumb([['Mein Arbeitsplatz', '#/arbeitsplatz'], [a.name]]),
       h('div', { class: 'apphead' }, h('span', { class: 'tile-i c-' + a.farbe }, icon(a.icon)), h('div', null, h('h1', null, a.name), h('p', { class: 'muted' }, a.info)))]);
     if (!appActive(a)) {
@@ -410,7 +432,10 @@
       return;
     }
     var mods = (a.mods || []).map(mod).filter(Boolean);
-    add(app, section('Aufträge', null, h('div', { class: 'card list' }, mods.map(taskRow))));
+    var mails = bundle.mails.filter(function (m) { return (m.att || []).some(function (t) { var tt = toolDef(t.tool); return tt && tt.app === a.id; }); });
+    add(app, section('Aufträge', null, h('div', { class: 'card list' }, mails.map(mailRow), mods.map(taskRow))));
+    var tl = visibleTools().filter(function (t) { return t.app === a.id; });
+    if (tl.length) add(app, section('Werkzeuge', null, h('div', { class: 'card list' }, tl.map(toolRow))));
     var w = wikiFor(a.mods || []);
     if (w.length) add(app, section('Nachschlagen', ['Wissen & Vorlagen', '#/wissen'], h('div', { class: 'card list' }, w.map(wikiRow))));
   }
@@ -538,6 +563,322 @@
   }
 
 
+  /* ---------- Freischalt-Codes (Stunden-Codes und Lehrermodus) ---------- */
+  function ckey() { return 'ln_codes_' + bundle.id; }
+  function applyUnit(u) {
+    if (!u || (u.key && bundle._applied[u.key])) return;
+    if (u.key) bundle._applied[u.key] = 1;
+    (u.mails || []).forEach(function (m) { bundle.mails.push(m); });
+    (u.tools || []).forEach(function (t) { bundle.tools.push(t); });
+    (u.news || []).forEach(function (n) { bundle.news.push(n); });
+    (u.termine || []).forEach(function (t) { bundle.termine.push(t); });
+    (u.chat || []).forEach(function (c) {
+      var ex = bundle.chat.filter(function (x) { return x.id === c.id; })[0];
+      if (ex) ex.msgs = ex.msgs.concat(c.msgs); else bundle.chat.push({ id: c.id, mit: c.mit, msgs: c.msgs.slice() });
+    });
+    (u.ablage || []).forEach(function (o) {
+      var ex = bundle.ablage.filter(function (x) { return x.ordner === o.ordner; })[0];
+      if (ex) ex.docs = ex.docs.concat(o.docs); else bundle.ablage.push({ ordner: o.ordner, docs: o.docs.slice() });
+    });
+  }
+  function applyData(d) {
+    if (d.lehrer) { bundle.lehrer = true; (d.units || []).forEach(applyUnit); }
+    else applyUnit(d);
+  }
+  function fetchEnc(file) { return fetch('content/' + file + '.enc.json', { cache: 'no-cache' }).then(function (r) { if (!r.ok) throw new Error('fetch'); return r.json(); }); }
+  function tryCode(code, files) {
+    var i = 0;
+    function next() {
+      if (i >= files.length) return Promise.resolve(null);
+      var f = files[i++];
+      return fetchEnc(f).then(function (enc) { return decrypt(enc, code); }).then(function (d) { return { f: f, d: d }; }, function () { return next(); });
+    }
+    return next();
+  }
+  function unitFiles() { return bundle.units.concat(bundle.lehrerFile ? [bundle.lehrerFile] : []); }
+  function loadUnits() {
+    var list = LS.get(ckey(), []), chain = Promise.resolve();
+    list.forEach(function (e) {
+      chain = chain.then(function () { return tryCode(e.c, [e.f]); }).then(function (r) { if (r) applyData(r.d); });
+    });
+    return chain.then(null, function () { /* offline ohne Kopie: weiter ohne Einheit */ });
+  }
+  function endLehrer() {
+    LS.set(ckey(), LS.get(ckey(), []).filter(function (e) { return e.f !== bundle.lehrerFile; }));
+    LS.del('ln_beamer'); location.hash = '#/'; location.reload();
+  }
+  function codeBox() {
+    if (!unitFiles().length) return null;
+    var input = h('input', { type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Code', 'aria-label': 'Code von der Lehrkraft' });
+    var msg = h('div', { role: 'status', 'aria-live': 'polite' }), btn = h('button', { class: 'btn', type: 'submit' }, 'Freischalten');
+    return h('section', { class: 'codebox' }, icon('key'),
+      h('div', null, h('b', null, 'Code von der Lehrkraft?'), h('span', null, 'Damit kommen neue Nachrichten und Aufgaben ins LindnerNet.'),
+        h('form', { class: 'code-form', onsubmit: function (e) {
+          e.preventDefault(); var c = normCode(input.value); if (!c) return;
+          msg.textContent = '';
+          if (LS.get(ckey(), []).some(function (x) { return x.c === c; })) { add(msg, h('p', { class: 'msg ok' }, 'Dieser Code ist schon freigeschaltet.')); return; }
+          btn.disabled = true; btn.textContent = 'Prüfe …';
+          tryCode(c, unitFiles()).then(function (r) {
+            btn.disabled = false; btn.textContent = 'Freischalten';
+            if (!r) { add(msg, h('p', { class: 'msg bad' }, 'Dieser Code passt nicht. Prüfe die Schreibweise.')); return; }
+            var l = LS.get(ckey(), []); l.push({ c: c, f: r.f }); LS.set(ckey(), l);
+            applyData(r.d);
+            location.hash = r.d.lehrer ? '#/arbeitsplatz' : '#/postfach'; go();
+          });
+        } }, input, btn), msg));
+  }
+
+  /* ---------- Postfach: Mails und Aufträge ---------- */
+  function seen(kind) { return LS.get('ln_' + kind + '_' + bundle.id, {}); }
+  function markSeen(kind, id, val) { var s = seen(kind); if (s[id] !== (val || 1)) { s[id] = val || 1; LS.set('ln_' + kind + '_' + bundle.id, s); } }
+  function unreadMails() { var s = seen('mail'); return bundle.mails.filter(function (m) { return !s[m.id]; }); }
+  function unreadChat() { var s = seen('chat'), n = 0; bundle.chat.forEach(function (c) { n += Math.max(0, c.msgs.length - (s[c.id] || 0)); }); return n; }
+  function lastMsg() { var c = bundle.chat[0]; return c.msgs[c.msgs.length - 1]; }
+  function allNews() { return SH.news.concat(bundle.news).sort(function (a, b) { return b.d.localeCompare(a.d); }); }
+  function inbox() {
+    var s = seen('mail'), items = bundle.mails.map(function (m) { return { d: m.d + (m.z || ''), neu: !s[m.id], von: m.von, betreff: m.betreff, href: '#/mail/' + m.id, row: function () { return mailRow(m); } }; });
+    bundle.modules.forEach(function (m) {
+      var meta = (bundle.post || {})[m.id] || {};
+      items.push({ d: (meta.d || '') + '99', neu: !locked(m) && modProgress(m) < 1, von: meta.von, betreff: meta.betreff || m.title, href: '#/m/' + m.id, row: function () { return taskRow(m); } });
+    });
+    return items.sort(function (a, b) { return b.d.localeCompare(a.d); });
+  }
+  function inboxRows() { return inbox().map(function (x) { return x.row(); }); }
+  function mailRow(m) {
+    var von = person(m.von), neu = !seen('mail')[m.id];
+    return h('a', { class: 'trow' + (neu ? ' unread' : ''), href: '#/mail/' + m.id }, avatar(von),
+      h('span', { class: 'trow-t' }, h('span', { class: 'trow-from' }, pname(von), h('time', null, fmtShort(m.d) + (m.z ? ', ' + m.z : ''))),
+        h('b', null, m.betreff), h('span', null, (m.att || []).length ? '📎 ' + m.att.map(function (a) { return a.name; }).join(', ') : '')),
+      neu ? h('span', { class: 'pill n' }, 'neu') : null);
+  }
+  function viewMail(id) {
+    var m = bundle.mails.filter(function (x) { return x.id === id; })[0];
+    if (!m) { location.hash = '#/postfach'; return; }
+    markSeen('mail', id);
+    var von = person(m.von);
+    add(app, [crumb([['Mein Arbeitsplatz', '#/arbeitsplatz'], ['Postfach', '#/postfach'], [m.betreff]]),
+      h('div', { class: 'card' }, h('div', { class: 'mail' },
+        h('div', { class: 'mail-h' }, avatar(von), h('div', null, h('b', null, pname(von)), ' · ' + von.fn, h('div', { class: 'meta' }, 'An: ' + m.an + (m.cc ? ' · Cc: ' + m.cc : '') + ' · ' + fmtShort(m.d) + (m.z ? ', ' + m.z : '')))),
+        h('div', { class: 'mail-s' }, m.betreff), h('div', { class: 'mail-b' }, paras(m.body)),
+        (m.att || []).length ? h('div', { class: 'mail-att' }, m.att.map(function (a) {
+          return h('a', { class: 'attfile', href: a.tool ? '#/tool/' + a.tool : '#/doc/' + a.doc }, h('span', { class: 'lrow-i' }, icon('file')), h('span', { class: 'lrow-t' }, h('b', null, a.name), h('span', null, 'Anhang öffnen')), icon('chevron'));
+        })) : null,
+        h('div', { class: 'mail-f' }, 'Interne Nachricht · Lindner Bürowelt am Main KG'))),
+      h('a', { class: 'btn sec', href: '#/postfach' }, '← Postfach')]);
+  }
+
+  /* ---------- Chat ---------- */
+  function viewChat(a) {
+    add(app, h('div', { class: 'apphead' }, h('span', { class: 'tile-i c-' + a.farbe }, icon(a.icon)), h('div', null, h('h1', null, a.name), h('p', { class: 'muted' }, a.info))));
+    if (!bundle.chat.length) { add(app, h('div', { class: 'card empty' }, icon('chat'), h('h2', null, 'Noch keine Nachrichten'), h('p', { class: 'muted' }, 'Sobald dir jemand schreibt, erscheint es hier.'))); return; }
+    bundle.chat.forEach(function (c) {
+      var p = person(c.mit), lastDay = '';
+      var box = h('div', { class: 'card chatwin' }, h('div', { class: 'chat-h' }, avatar(p), h('span', null, h('b', null, pname(p)), h('span', { class: 'st st-' + p.st }, STATUS[p.st]))));
+      var list = h('div', { class: 'chat' });
+      c.msgs.forEach(function (m) {
+        if (m.d !== lastDay) { lastDay = m.d; add(list, h('div', { class: 'chat-day' }, fmtShort(m.d))); }
+        add(list, h('div', { class: 'bub' + (m.von === 'ich' ? ' r' : '') }, m.x, h('small', { class: 'chat-t' }, m.z)));
+      });
+      add(box, [list, h('p', { class: 'small muted', style: 'margin:10px 0 0' }, 'Antworten gibst du im Unterricht, nicht hier im Chat.')]);
+      add(app, box);
+      markSeen('chat', c.id, c.msgs.length);
+    });
+  }
+
+  /* ---------- Ablage ---------- */
+  function allDocs() { var r = []; bundle.ablage.forEach(function (o) { o.docs.forEach(function (d) { r.push({ o: o.ordner, d: d }); }); }); return r; }
+  function docRow(d) {
+    return h('a', { class: 'lrow', href: '#/doc/' + d.id }, h('span', { class: 'lrow-i doc-' + (d.art || 'PDF').toLowerCase() }, h('span', { class: 'doc-art' }, d.art || 'PDF')),
+      h('span', { class: 'lrow-t' }, h('b', null, d.titel), d.info ? h('span', null, d.info) : null), icon('chevron'));
+  }
+  function viewAblage(a) {
+    add(app, h('div', { class: 'apphead' }, h('span', { class: 'tile-i c-' + a.farbe }, icon(a.icon)), h('div', null, h('h1', null, a.name), h('p', { class: 'muted' }, a.info))));
+    if (!bundle.ablage.length) { add(app, h('div', { class: 'card empty' }, icon('folder'), h('h2', null, 'Die Ablage ist noch leer'), h('p', { class: 'muted' }, 'Dokumente erscheinen hier, sobald du sie für einen Auftrag brauchst.'))); return; }
+    bundle.ablage.forEach(function (o) {
+      add(app, section(o.ordner, null, h('div', { class: 'card list' }, o.docs.map(docRow))));
+    });
+    add(app, h('p', { class: 'small muted' }, icon('shield'), ' Die Ablage enthält nur Unterlagen, die für deinen Auftrag freigegeben sind. Personalakten sieht nur, wer sie für seine Arbeit braucht.'));
+  }
+  function viewDoc(id) {
+    var x = allDocs().filter(function (e) { return e.d.id === id; })[0];
+    if (!x) { location.hash = '#/app/ablage'; return; }
+    var d = x.d;
+    add(app, [crumb([['Mein Arbeitsplatz', '#/arbeitsplatz'], ['Ablage', '#/app/ablage'], [d.titel]]),
+      h('article', { class: 'card paper' }, h('div', { class: 'kicker' }, x.o), h('h1', null, d.titel), d.info ? h('p', { class: 'muted' }, d.info) : null,
+        d.pre ? h('pre', { class: 'doc' }, d.pre) : null, d.body ? paras(d.body) : null),
+      h('a', { class: 'btn sec', href: '#/app/ablage' }, '← Ablage')]);
+  }
+
+  /* ---------- Werkzeuge ---------- */
+  function toolDef(id) { return bundle.tools.filter(function (t) { return t.id === id; })[0]; }
+  function toolState(id) { return LS.get('ln_t_' + bundle.id + '_' + id, {}); }
+  function setToolState(id, st) { LS.set('ln_t_' + bundle.id + '_' + id, st); }
+  function toolLocked(t) { return !bundle.lehrer && t.nach && !toolState(t.nach).done; }
+  function visibleTools() { return bundle.tools; }
+  var TOOLICON = { detektiv: 'search', quiz: 'check', check: 'file' };
+  function toolRow(t) {
+    var st = toolState(t.id), d = prog().done['tool:' + t.id], lock = toolLocked(t);
+    var pill = lock ? h('span', { class: 'pill' }, 'nach Level 1') : d ? h('span', { class: 'pill ' + (d.max && d.pts >= d.max ? 'g' : 'o') }, d.max ? d.pts + ' / ' + d.max : 'erledigt') : st.started ? h('span', { class: 'pill o' }, 'in Arbeit') : h('span', { class: 'pill n' }, 'neu');
+    return h('a', { class: 'lrow' + (lock ? ' off' : ''), href: '#/tool/' + t.id }, h('span', { class: 'lrow-i' }, icon(lock ? 'lock' : TOOLICON[t.typ] || 'file')),
+      h('span', { class: 'lrow-t' }, h('b', null, t.titel), h('span', null, t.kurz)), pill);
+  }
+  function viewTool(id) {
+    var t = toolDef(id);
+    if (!t) { location.hash = '#/arbeitsplatz'; return; }
+    var a = appDef(t.app);
+    add(app, crumb([['Mein Arbeitsplatz', '#/arbeitsplatz'], a ? [a.name, '#/app/' + a.id] : ['Werkzeuge'], [t.titel]]));
+    if (toolLocked(t)) {
+      add(app, h('div', { class: 'card empty' }, icon('lock'), h('h2', null, 'Erst Level 1 abschließen'), h('p', { class: 'muted' }, 'Level 2 wird frei, sobald du die Prüfung in Level 1 abgeschlossen hast.'), h('a', { class: 'btn', href: '#/tool/' + t.nach }, 'Zu Level 1')));
+      return;
+    }
+    var box = h('section', { class: 'card' }, h('div', { class: 'kicker' }, t.typ === 'detektiv' ? 'Werkzeug · Level ' + t.stufe : t.typ === 'quiz' ? 'Prüfungstraining' : 'Checkliste'), h('h1', { class: 'h2' }, t.titel));
+    add(app, box);
+    if (t.typ === 'detektiv') detektiv(t, box);
+    else if (t.typ === 'quiz') { add(box, h('p', { class: 'muted' }, t.kurz)); RENDER.quiz(t, box, function (pts, max) { setDone('tool', t.id, pts, max); }); }
+    else if (t.typ === 'check') checkliste(t, box);
+  }
+
+  function checkliste(t, box) {
+    var st = toolState(t.id); st.c = st.c || {};
+    function save() { st.started = 1; setToolState(t.id, st); }
+    add(box, h('p', { class: 'muted' }, t.kurz));
+    add(box, h('ul', { class: 'checks' }, t.items.map(function (x, i) {
+      var cb = h('input', { type: 'checkbox', id: 'c' + i, onchange: function () { st.c[i] = cb.checked; save(); } }); cb.checked = !!st.c[i];
+      return h('li', null, h('label', { for: 'c' + i }, cb, h('span', null, x)));
+    })));
+    var res = h('div', { role: 'status' });
+    add(box, [h('p', { style: 'margin-top:14px' }, h('b', null, t.frage)), h('div', { class: 'opts' }, ['Ja, so kann sie raus', 'Ja, mit kleinen Änderungen', 'Nein, so nicht'].map(function (l, i) {
+      return h('button', { type: 'button', class: 'opt' + (st.v === i ? ' sel' : ''), onclick: function () { st.v = i; save(); setDone('tool', t.id, 0, 0); viewToolRefresh(); } }, l);
+    })), res,
+      h('button', { type: 'button', class: 'btn ghost', onclick: function () { setToolState(t.id, {}); viewToolRefresh(); } }, 'Für die nächste Anzeige leeren')]);
+  }
+  function viewToolRefresh() { var y = window.scrollY; go(); window.scrollTo(0, y); }
+
+  /* ---------- Anzeigen-Detektiv ---------- */
+  var AGG = [['herkunft', 'Ethnische Herkunft'], ['geschlecht', 'Geschlecht'], ['religion', 'Religion / Weltanschauung'], ['behinderung', 'Behinderung'], ['alter', 'Alter'], ['identitaet', 'Sexuelle Identität']];
+  var OTHER = [['profil', 'Passt nicht zum Profil'], ['ok', 'Zulässig']];
+  var CATN = {}; AGG.concat(OTHER).forEach(function (c) { CATN[c[0]] = c[1]; });
+  function isAgg(k) { return AGG.some(function (c) { return c[0] === k; }); }
+  function spots(t) { var r = []; t.teile.forEach(function (p) { (p.s || []).forEach(function (s) { r.push(s); }); }); return r; }
+
+  function detektiv(t, box) {
+    var st = toolState(t.id); st.m = st.m || {}; st.neu = st.neu || {}; st.tips = st.tips || 0;
+    var all = spots(t);
+    function save() { st.started = 1; setToolState(t.id, st); }
+    if (st.done || st.show) { detektivResult(t, box, st, all); return; }
+    add(box, h('p', null, t.auftrag));
+
+    var sheet = null;
+    function closeSheet() { if (sheet) { sheet.remove(); sheet = null; } }
+    function openSheet(i, el) {
+      closeSheet();
+      function pick(k) { if (k) st.m[i] = k; else delete st.m[i]; save(); closeSheet(); paintAd(); paintList(); }
+      sheet = h('div', { class: 'sheet-bg', onclick: function (e) { if (e.target === sheet) closeSheet(); } },
+        h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Stelle zuordnen' },
+          h('p', { class: 'sheet-q' }, '„' + all[i].x + '“'),
+          h('p', { class: 'sheet-l' }, 'Verstoß gegen das AGG wegen …'),
+          h('div', { class: 'sheet-g' }, AGG.map(function (c) { return h('button', { type: 'button', class: 'opt' + (st.m[i] === c[0] ? ' sel' : ''), onclick: function () { pick(c[0]); } }, c[1]); })),
+          h('p', { class: 'sheet-l' }, 'Kein AGG-Verstoß'),
+          h('div', { class: 'sheet-g two' }, OTHER.map(function (c) { return h('button', { type: 'button', class: 'opt' + (st.m[i] === c[0] ? ' sel' : ''), onclick: function () { pick(c[0]); } }, c[1]); })),
+          h('div', { class: 'row', style: 'margin-top:10px' }, st.m[i] ? h('button', { type: 'button', class: 'btn ghost', onclick: function () { pick(null); } }, 'Markierung entfernen') : null,
+            h('button', { type: 'button', class: 'btn sec', onclick: closeSheet }, 'Abbrechen'))));
+      document.body.appendChild(sheet);
+      var first = sheet.querySelector('button'); if (first) first.focus();
+    }
+
+    var ad = h('div', { class: 'ad' });
+    function paintAd() {
+      ad.textContent = ''; var gi = 0;
+      add(ad, h('div', { class: 'ad-h' }, h('img', { src: 'assets/logo_kurz_farbig.png', alt: '' }), h('span', null, t.kopf.medium)));
+      t.teile.forEach(function (p) {
+        if (!p.s) { add(ad, h(p.h === 'h3' ? 'h3' : 'p', null, p.x)); return; }
+        var nodes = p.s.map(function (s) {
+          var i = gi++, k = st.m[i];
+          return h('span', { class: 'spot' + (k ? (k === 'ok' ? ' m-ok' : k === 'profil' ? ' m-pr' : ' m-agg') : ''), role: 'button', tabindex: '0', 'aria-label': s.x + (k ? ', markiert: ' + CATN[k] : ''),
+            onclick: function (e) { openSheet(i, e.currentTarget); }, onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSheet(i); } } }, s.x, k ? h('em', { class: 'spot-tag' }, CATN[k]) : null);
+        });
+        if (p.h === 'ul') add(ad, h('ul', null, nodes.map(function (n) { return h('li', null, n); })));
+        else if (p.h === 'titel') add(ad, h('h2', { class: 'ad-t' }, nodes));
+        else add(ad, h('p', null, nodes.reduce(function (acc, n, j) { if (j) acc.push(' '); acc.push(n); return acc; }, [])));
+      });
+      add(ad, h('div', { class: 'ad-f' }, t.kopf.firma + ' · ' + t.kopf.ort));
+    }
+    var list = h('div'), count = h('p', { class: 'small muted', role: 'status' });
+    function paintList() {
+      list.textContent = '';
+      var marked = Object.keys(st.m).map(Number).sort(function (a, b) { return a - b; });
+      var bad = marked.filter(function (i) { return st.m[i] !== 'ok'; });
+      count.textContent = marked.length ? marked.length + (marked.length === 1 ? ' Stelle markiert' : ' Stellen markiert') + ', davon ' + bad.length + ' als Problem.' : 'Noch nichts markiert. Tippe in der Anzeige auf eine Stelle.';
+      if (!bad.length) return;
+      add(list, h('h2', { class: 'h3' }, 'Deine Neuformulierungen'));
+      add(list, h('p', { class: 'small muted' }, 'Schreib zu jeder Problemstelle, wie es richtig heißen könnte.'));
+      bad.forEach(function (i) {
+        var ta = h('textarea', { rows: 2, 'aria-label': 'Neuformulierung für: ' + all[i].x, placeholder: 'So würden wir es schreiben …', oninput: function () { st.neu[i] = ta.value; save(); } });
+        ta.value = st.neu[i] || '';
+        add(list, h('div', { class: 'rew' }, h('p', null, h('s', null, all[i].x), ' ', h('span', { class: 'pill ' + (st.m[i] === 'profil' ? '' : 'n') }, CATN[st.m[i]])), ta));
+      });
+    }
+    var tipBox = h('div');
+    function paintTips() {
+      tipBox.textContent = '';
+      t.tipps.slice(0, st.tips).forEach(function (x, i) { add(tipBox, h('div', { class: 'tip' }, h('b', null, 'Tipp ' + (i + 1) + ': '), x)); });
+      if (st.tips < t.tipps.length) add(tipBox, h('button', { type: 'button', class: 'btn ghost', onclick: function () { st.tips++; save(); paintTips(); } }, st.tips ? 'Noch einen Tipp' : 'Tipp anzeigen', ' (' + (st.tips + 1) + ' von ' + t.tipps.length + ')'));
+    }
+    paintAd(); paintList(); paintTips();
+    add(box, [ad, count, tipBox, list,
+      h('div', { class: 'row', style: 'margin-top:16px' },
+        h('button', { type: 'button', class: 'btn', onclick: function () {
+          var miss = Object.keys(st.m).filter(function (i) { return st.m[i] !== 'ok' && !(st.neu[i] || '').trim(); }).length;
+          if (miss && !confirm(miss + (miss === 1 ? ' Stelle hat' : ' Stellen haben') + ' noch keine Neuformulierung. Trotzdem abschließen?')) return;
+          st.done = 1; save(); var r = score(all, st); setDone('tool', t.id, r.right, r.total); viewToolRefresh();
+        } }, 'Prüfung abschließen'),
+        bundle.lehrer ? h('button', { type: 'button', class: 'btn sec', onclick: function () { st.show = 1; setToolState(t.id, st); viewToolRefresh(); } }, 'Auflösung zeigen (Lehrkraft)') : null)]);
+  }
+  function score(all, st) {
+    var r = { right: 0, half: 0, total: 0, traps: 0, trapsOk: 0, fals: 0 };
+    all.forEach(function (s, i) {
+      var m = st.m[i];
+      if (s.k && s.k !== 'ok') { r.total++; if (m === s.k) r.right++; else if (isAgg(s.k) && isAgg(m)) r.half++; }
+      else if (s.k === 'ok') { r.traps++; if (!m || m === 'ok') r.trapsOk++; }
+      else if (m && m !== 'ok') r.fals++;
+    });
+    return r;
+  }
+  function detektivResult(t, box, st, all) {
+    var solo = st.show && !st.done, r = score(all, st);
+    if (!solo) {
+      add(box, h('div', { class: 'score' }, h('b', null, r.right + ' / ' + r.total), h('p', null, 'Problemstellen richtig erkannt' + (r.half ? ', dazu ' + r.half + ' erkannt, aber mit falschem Merkmal' : '') + '.'),
+        h('p', { class: 'small muted' }, 'Zulässige Stellen richtig gelassen: ' + r.trapsOk + ' von ' + r.traps + (r.fals ? ' · Fehlalarme: ' + r.fals : ''))));
+    } else add(box, h('p', { class: 'muted' }, 'Auflösung für den Beamer. Rot: AGG-Verstoß · Lila: passt nicht zum Profil · Grün: zulässig.'));
+    var gi = 0, ad = h('div', { class: 'ad solved' }, h('div', { class: 'ad-h' }, h('img', { src: 'assets/logo_kurz_farbig.png', alt: '' }), h('span', null, t.kopf.medium)));
+    t.teile.forEach(function (p) {
+      if (!p.s) { add(ad, h(p.h === 'h3' ? 'h3' : 'p', null, p.x)); return; }
+      var nodes = p.s.map(function (s) {
+        var i = gi++, cls = s.k ? (s.k === 'ok' ? 'r-ok' : s.k === 'profil' ? 'r-pr' : 'r-agg') : '';
+        return h('span', { class: 'spot ' + cls }, s.x, s.k ? h('em', { class: 'spot-tag' }, CATN[s.k]) : null);
+      });
+      if (p.h === 'ul') add(ad, h('ul', null, nodes.map(function (n) { return h('li', null, n); })));
+      else if (p.h === 'titel') add(ad, h('h2', { class: 'ad-t' }, nodes));
+      else add(ad, h('p', null, nodes.reduce(function (acc, n, j) { if (j) acc.push(' '); acc.push(n); return acc; }, [])));
+    });
+    add(box, ad);
+    add(box, h('h2', { class: 'h3' }, 'Die Stellen im Einzelnen'));
+    all.forEach(function (s, i) {
+      var m = st.m[i];
+      if (!s.k && !(m && m !== 'ok')) return;
+      var verdict = solo ? null : !s.k ? ['Fehlalarm', 'bad'] : s.k === 'ok' ? (!m || m === 'ok' ? ['richtig gelassen', 'ok'] : ['Falle: zulässig', 'bad']) : m === s.k ? ['richtig', 'ok'] : isAgg(s.k) && isAgg(m) ? ['Verstoß erkannt, anderes Merkmal', 'half'] : ['übersehen', 'bad'];
+      add(box, h('div', { class: 'sol ' + (s.k === 'ok' ? 'sol-ok' : s.k === 'profil' ? 'sol-pr' : s.k ? 'sol-agg' : '') },
+        h('p', { class: 'sol-q' }, '„' + s.x + '“'),
+        h('p', null, h('b', null, s.k ? CATN[s.k] + (isAgg(s.k) ? ' (Merkmal nach § 1 AGG)' : '') : 'Unauffällige Stelle'), s.p ? ' · ' + s.p : '', verdict ? h('span', { class: 'v v-' + verdict[1] }, verdict[0]) : null),
+        s.w ? h('p', null, s.w) : h('p', null, 'Diese Formulierung ist in Ordnung.'),
+        !solo && st.neu[i] ? h('p', { class: 'mine' }, h('b', null, 'Deine Formulierung: '), st.neu[i]) : null,
+        s.neu ? h('p', { class: 'sugg' }, h('b', null, 'Ein Vorschlag: '), s.neu) : null));
+    });
+    add(box, h('div', { class: 'row', style: 'margin-top:14px' },
+      h('button', { type: 'button', class: 'btn sec', onclick: function () { if (solo || confirm('Neu anfangen? Deine Markierungen und Formulierungen werden gelöscht.')) { setToolState(t.id, {}); viewToolRefresh(); } } }, solo ? 'Auflösung schließen' : 'Noch einmal prüfen'),
+      t.id === 'detektiv1' && toolDef('detektiv2') && !solo ? h('a', { class: 'btn', href: '#/tool/detektiv2' }, 'Weiter zu Level 2') : null));
+  }
+
   /* ---------- Wissen & Vorlagen ---------- */
   function viewWiki(mid, idx) {
     var m = mod(mid), s = m && !locked(m) ? m.steps[idx] : null;
@@ -610,6 +951,7 @@
           h('div', null, h('dt', null, 'Durchwahl'), h('dd', null, '06021 4477-' + String(p.nr).slice(1))),
           h('div', null, h('dt', null, 'Bei Lindner seit'), h('dd', null, String(p.seit))),
           chef.nr !== p.nr ? h('div', null, h('dt', null, p.abt === 'az' ? 'Ausbilder' : 'Vorgesetzt'), h('dd', null, h('a', { href: '#/person/' + chef.nr }, pname(chef)))) : null)),
+      (SH.steckbrief || {})[p.nr] ? h('div', { class: 'card' }, h('h2', null, 'Steckbrief'), paras(SH.steckbrief[p.nr])) : null,
       h('p', { class: 'small muted' }, icon('shield'), ' Im Verzeichnis stehen nur dienstliche Angaben. Geburtsdatum, Entgelt oder Fehlzeiten gehören in die Personalakte und sind nur für die Personalabteilung sichtbar.')]);
     var team = SH.personen.filter(function (x) { return x.abt === p.abt && x.nr !== p.nr; });
     if (team.length) add(app, section('Im selben Team', null, h('div', { class: 'card list' }, team.map(function (x) { return personRow(x); }))));
@@ -643,6 +985,7 @@
           d ? h('span', { class: 'pill ' + (d.max && d.pts >= d.max ? 'g' : 'o') }, d.max ? d.pts + ' / ' + d.max : 'geübt') : h('span', { class: 'pill n' }, 'offen')));
       });
     });
+    visibleTools().forEach(function (t) { if (t.typ === 'quiz' || t.typ === 'detektiv') rows.unshift(toolRow(t)); });
     add(app, [head('Akademie', 'Üben für Schulaufgabe und Abschlussprüfung'),
       h('div', { class: 'stats' },
         h('div', { class: 'stat' }, h('b', null, String(totalPoints())), h('span', null, 'Punkte auf diesem Gerät')),
@@ -667,7 +1010,7 @@
     group('Aufträge', bundle.modules.filter(function (m) { return !locked(m) && has(m.title, m.intro, ((bundle.post || {})[m.id] || {}).betreff); }).map(taskRow));
     group('Apps', bundle.apps.filter(function (a) { return has(a.name, a.info); }).map(function (a) { return row(a.id === 'postfach' ? '#/postfach' : '#/app/' + a.id, a.icon, a.name, a.ab ? 'ab ' + a.ab : a.info); }));
     group('Leitfäden', wikiFor(null).filter(function (w) { return has(mod(w.m).steps[w.s].title); }).map(wikiRow));
-    group('News', SH.news.filter(function (n) { return has(n.titel, n.teaser, n.text.join(' ')); }).map(function (n) { return row('#/news/' + n.id, 'news', n.titel, n.kat + ' · ' + fmtDate(n.d)); }));
+    group('News', allNews().filter(function (n) { return has(n.titel, n.teaser, n.text.join(' ')); }).map(function (n) { return row('#/news/' + n.id, 'news', n.titel, n.kat + ' · ' + fmtDate(n.d)); }));
     group('Termine', termine().filter(function (e) { return has(e.t, e.o); }).map(function (e) { return row('#/aktuelles', 'calendar', e.t, fmtShort(e.d) + (e.z ? ' · ' + e.z + ' Uhr' : '')); }));
     var gl = bundle.glossary.filter(function (t) { return has(t.b, t.d); });
     if (gl.length) { any = true; add(app, section('Wiki: Fachbegriffe', null, h('dl', { class: 'gl' }, gl.map(function (t) { return h('div', null, h('dt', null, t.b), h('dd', null, t.d)); })))); }
@@ -708,8 +1051,9 @@
 
   /* ---------- Los ---------- */
   window.addEventListener('hashchange', go);
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(function () { /* ohne Offline-Modus weiter */ });
   var saved = LS.get('lb_code', null);
   if (saved && window.crypto && crypto.subtle) {
-    unlock(saved).then(function (data) { if (data) setBundle(data); else LS.del('lb_code'); go(); }, function () { go(); });
+    unlock(saved).then(function (data) { if (data) { setBundle(data); return loadUnits().then(go); } LS.del('lb_code'); go(); }, function () { go(); });
   } else go();
 })();
