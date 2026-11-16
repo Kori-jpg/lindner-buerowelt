@@ -803,18 +803,19 @@
       });
       add(ad, h('div', { class: 'ad-f' }, t.kopf.firma + ' · ' + t.kopf.ort));
     }
-    var list = h('div'), count = h('p', { class: 'small muted', role: 'status' });
+    var list = h('div'), count = h('p', { class: 'small muted', role: 'status' }), warn = h('p', { class: 'small', role: 'alert', style: 'color:#B3261E;font-weight:600' });
     function paintList() {
-      list.textContent = '';
+      list.textContent = ''; warn.textContent = '';
       var marked = Object.keys(st.m).map(Number).sort(function (a, b) { return a - b; });
       var bad = marked.filter(function (i) { return st.m[i] !== 'ok'; });
       count.textContent = marked.length ? marked.length + (marked.length === 1 ? ' Stelle markiert' : ' Stellen markiert') + ', davon ' + bad.length + ' als Problem.' : 'Noch nichts markiert. Tippe in der Anzeige auf eine Stelle.';
       if (!bad.length) return;
       add(list, h('h2', { class: 'h3' }, 'Deine Neuformulierungen'));
-      add(list, h('p', { class: 'small muted' }, 'Schreib zu jeder Problemstelle, wie es richtig heißen könnte.'));
+      add(list, h('p', { class: 'small muted' }, 'Pflicht: Schreib zu jeder Problemstelle, wie es richtig heißen muss. Erst dann kannst du die Prüfung abschließen.'));
       bad.forEach(function (i) {
-        var ta = h('textarea', { rows: 2, 'aria-label': 'Neuformulierung für: ' + all[i].x, placeholder: 'So würden wir es schreiben …', oninput: function () { st.neu[i] = ta.value; save(); } });
+        var ta = h('textarea', { rows: 2, 'aria-label': 'Neuformulierung für: ' + all[i].x, placeholder: 'So würden wir es schreiben … (Pflicht)', oninput: function () { st.neu[i] = ta.value; save(); if (ta.value.trim().length >= 5) { ta.removeAttribute('data-leer'); ta.style.borderColor = ''; } } });
         ta.value = st.neu[i] || '';
+        if ((st.neu[i] || '').trim().length < 5) ta.setAttribute('data-leer', '1');
         add(list, h('div', { class: 'rew' }, h('p', null, h('s', null, all[i].x), ' ', h('span', { class: 'pill ' + (st.m[i] === 'profil' ? '' : 'n') }, CATN[st.m[i]])), ta));
       });
     }
@@ -825,11 +826,17 @@
       if (st.tips < t.tipps.length) add(tipBox, h('button', { type: 'button', class: 'btn ghost', onclick: function () { st.tips++; save(); paintTips(); } }, st.tips ? 'Noch einen Tipp' : 'Tipp anzeigen', ' (' + (st.tips + 1) + ' von ' + t.tipps.length + ')'));
     }
     paintAd(); paintList(); paintTips();
-    add(box, [ad, count, tipBox, list,
+    add(box, [ad, count, tipBox, list, warn,
       h('div', { class: 'row', style: 'margin-top:16px' },
         h('button', { type: 'button', class: 'btn', onclick: function () {
-          var miss = Object.keys(st.m).filter(function (i) { return st.m[i] !== 'ok' && !(st.neu[i] || '').trim(); }).length;
-          if (miss && !confirm(miss + (miss === 1 ? ' Stelle hat' : ' Stellen haben') + ' noch keine Neuformulierung. Trotzdem abschließen?')) return;
+          var miss = Object.keys(st.m).filter(function (i) { return st.m[i] !== 'ok' && (st.neu[i] || '').trim().length < 5; }).length;
+          if (miss) {
+            warn.textContent = 'Noch nicht fertig: ' + miss + (miss === 1 ? ' Problemstelle hat' : ' Problemstellen haben') + ' noch keine Neuformulierung. Schreib zu jeder Stelle, wie wir es richtig formulieren.';
+            var leer = list.querySelectorAll('textarea[data-leer]');
+            for (var j = 0; j < leer.length; j++) leer[j].style.borderColor = '#B3261E';
+            if (leer[0]) leer[0].focus();
+            return;
+          }
           st.done = 1; save(); var r = score(all, st); setDone('tool', t.id, r.right, r.total); viewToolRefresh();
         } }, 'Prüfung abschließen'),
         bundle.lehrer ? h('button', { type: 'button', class: 'btn sec', onclick: function () { st.show = 1; setToolState(t.id, st); viewToolRefresh(); } }, 'Auflösung zeigen (Lehrkraft)') : null)]);
