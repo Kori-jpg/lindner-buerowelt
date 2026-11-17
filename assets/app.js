@@ -715,7 +715,7 @@
   function setToolState(id, st) { LS.set('ln_t_' + bundle.id + '_' + id, st); }
   function toolLocked(t) { return !bundle.lehrer && t.nach && !toolState(t.nach).done; }
   function visibleTools() { return bundle.tools; }
-  var TOOLICON = { detektiv: 'search', quiz: 'check', check: 'file' };
+  var TOOLICON = { detektiv: 'search', quiz: 'check', check: 'file', dilemma: 'scale', vorlage: 'file' };
   function toolRow(t) {
     var st = toolState(t.id), d = prog().done['tool:' + t.id], lock = toolLocked(t);
     var pill = lock ? h('span', { class: 'pill' }, 'nach Level 1') : d ? h('span', { class: 'pill ' + (d.max && d.pts >= d.max ? 'g' : 'o') }, d.max ? d.pts + ' / ' + d.max : 'erledigt') : st.started ? h('span', { class: 'pill o' }, 'in Arbeit') : h('span', { class: 'pill n' }, 'neu');
@@ -731,11 +731,106 @@
       add(app, h('div', { class: 'card empty' }, icon('lock'), h('h2', null, 'Erst Level 1 abschließen'), h('p', { class: 'muted' }, 'Level 2 wird frei, sobald du die Prüfung in Level 1 abgeschlossen hast.'), h('a', { class: 'btn', href: '#/tool/' + t.nach }, 'Zu Level 1')));
       return;
     }
-    var box = h('section', { class: 'card' }, h('div', { class: 'kicker' }, t.typ === 'detektiv' ? 'Werkzeug · Level ' + t.stufe : t.typ === 'quiz' ? 'Prüfungstraining' : 'Checkliste'), h('h1', { class: 'h2' }, t.titel));
+    var box = h('section', { class: 'card' }, h('div', { class: 'kicker' }, t.kicker || (t.typ === 'detektiv' ? 'Werkzeug · Level ' + t.stufe : t.typ === 'quiz' ? 'Prüfungstraining' : t.typ === 'dilemma' ? 'Diskussion' : t.typ === 'vorlage' ? 'Entscheidungsvorlage' : 'Checkliste')), h('h1', { class: 'h2' }, t.titel));
     add(app, box);
     if (t.typ === 'detektiv') detektiv(t, box);
     else if (t.typ === 'quiz') { add(box, h('p', { class: 'muted' }, t.kurz)); RENDER.quiz(t, box, function (pts, max) { setDone('tool', t.id, pts, max); }); }
     else if (t.typ === 'check') checkliste(t, box);
+    else if (t.typ === 'dilemma') dilemma(t, box);
+    else if (t.typ === 'vorlage') vorlage(t, box);
+  }
+
+  /* ---------- Dilemma-Karten ---------- */
+  function dilemma(t, box) {
+    var st = toolState(t.id); st.a = st.a || {}; st.b = st.b || {}; st.i = st.i || 0; st.tally = st.tally || {}; st.z = st.z || {};
+    var OPT = t.optionen || ['vertretbar', 'nicht vertretbar', 'kommt drauf an'];
+    function save() { st.started = 1; setToolState(t.id, st); }
+    var i = Math.min(st.i, t.faelle.length - 1), f = t.faelle[i], mine = st.a[i], open = st.z[i];
+    add(box, h('p', { class: 'muted' }, t.kurz));
+    add(box, h('div', { class: 'dots', 'aria-label': 'Fall ' + (i + 1) + ' von ' + t.faelle.length }, t.faelle.map(function (_, j) {
+      return h('button', { type: 'button', class: 'dot' + (j === i ? ' on' : '') + (st.a[j] != null ? ' done' : ''), 'aria-label': 'Fall ' + (j + 1), onclick: function () { st.i = j; save(); viewToolRefresh(); } }, String(j + 1));
+    })));
+    var card = h('div', { class: 'dcard' }, h('span', { class: 'dcard-n' }, 'Fall ' + (i + 1) + ' von ' + t.faelle.length), h('p', { class: 'dcard-x' }, f.x));
+    add(box, card);
+    if (bundle.lehrer) {
+      var tl = st.tally[i] || [0, 0, 0];
+      add(box, [h('p', { class: 'sheet-l' }, 'Abstimmung in der Klasse (Handzeichen, Lehrkraft zählt ein)'),
+        h('div', { class: 'opts tally' }, OPT.map(function (o, k) {
+          return h('button', { type: 'button', class: 'opt', onclick: function () { tl[k]++; st.tally[i] = tl; save(); viewToolRefresh(); } }, h('b', null, String(tl[k])), ' ' + o);
+        })),
+        h('div', { class: 'row' }, open ? null : h('button', { type: 'button', class: 'btn sec', onclick: function () { st.z[i] = 1; save(); viewToolRefresh(); } }, 'Einschätzung zeigen'),
+          h('button', { type: 'button', class: 'btn ghost', onclick: function () { delete st.tally[i]; delete st.z[i]; save(); viewToolRefresh(); } }, 'Zählung zurücksetzen'))]);
+    } else {
+      var ta = h('textarea', { rows: 2, 'aria-label': 'Deine Begründung', placeholder: 'Weil … (ein Satz genügt)', oninput: function () { st.b[i] = ta.value; save(); } });
+      ta.value = st.b[i] || '';
+      add(box, [h('p', { class: 'sheet-l' }, 'Wie entscheidet ihr?'),
+        h('div', { class: 'opts three' }, OPT.map(function (o, k) {
+          return h('button', { type: 'button', class: 'opt' + (mine === k ? ' sel' : ''), onclick: function () { st.a[i] = k; save(); viewToolRefresh(); } }, o);
+        })), ta]);
+      if (!open) {
+        var hw = h('p', { class: 'small', role: 'alert', style: 'color:#B3261E;font-weight:600' });
+        add(box, [hw, h('button', { type: 'button', class: 'btn sec', onclick: function () {
+          if (mine == null) { hw.textContent = 'Entscheidet euch zuerst.'; return; }
+          if ((st.b[i] || '').trim().length < 10) { hw.textContent = 'Schreibt zuerst eure Begründung (ein Satz).'; ta.focus(); return; }
+          st.z[i] = 1; save(); viewToolRefresh();
+        } }, 'Einschätzung der Personalabteilung zeigen')]);
+      }
+    }
+    if (open) add(box, h('div', { class: 'sol ' + (f.r === 0 ? 'sol-ok' : f.r === 1 ? 'sol-agg' : 'sol-pr') },
+      h('p', null, h('b', null, 'Einschätzung der Personalabteilung: ' + OPT[f.r]), f.p ? ' · ' + f.p : '', !bundle.lehrer && mine != null ? h('span', { class: 'v v-' + (mine === f.r ? 'ok' : 'half') }, mine === f.r ? 'wie ihr' : 'anders als ihr') : null),
+      h('p', null, f.w)));
+    var done = Object.keys(st.a).length;
+    add(box, h('div', { class: 'row', style: 'margin-top:14px' },
+      i > 0 ? h('button', { type: 'button', class: 'btn sec', onclick: function () { st.i = i - 1; save(); viewToolRefresh(); } }, '← Zurück') : null,
+      i < t.faelle.length - 1 ? h('button', { type: 'button', class: 'btn', onclick: function () { st.i = i + 1; save(); viewToolRefresh(); } }, 'Nächster Fall →')
+        : h('button', { type: 'button', class: 'btn', onclick: function () { setDone('tool', t.id, done, t.faelle.length); location.hash = '#/app/' + t.app; } }, 'Fertig')));
+    if (!bundle.lehrer) add(box, h('p', { class: 'small muted' }, 'Es gibt nicht immer die eine richtige Antwort. Wichtig ist eure Begründung. Eure Antworten bleiben auf diesem Gerät.'));
+  }
+
+  /* ---------- Entscheidungsvorlage ---------- */
+  function vorlage(t, box) {
+    var st = toolState(t.id); st.b = st.b || {}; st.eigen = st.eigen || '';
+    function save() { st.started = 1; setToolState(t.id, st); }
+    var an = person(t.an);
+    add(box, h('p', null, t.auftrag));
+    if (st.fertig) {
+      var wahl = t.optionen[st.v] || '', bed = t.bedingungen.filter(function (_, k) { return st.b[k]; });
+      if (st.eigen.trim()) bed = bed.concat(st.eigen.split('\n').filter(function (x) { return x.trim(); }));
+      add(box, h('div', { class: 'card paper memo' },
+        h('div', { class: 'kicker' }, 'Entscheidungsvorlage'),
+        h('p', { class: 'small muted' }, 'An: ' + pname(an) + ', ' + an.fn + ' · Von: Personalabteilung · ' + fmtShort(t.datum)),
+        h('h2', null, t.betreff),
+        h('p', null, h('b', null, 'Empfehlung: '), wahl),
+        bed.length ? [h('p', null, h('b', null, 'Bedingungen:')), ul(bed)] : null,
+        h('p', null, h('b', null, 'Begründung: ')), h('p', { style: 'white-space:pre-wrap' }, st.text || ''),
+        h('p', { class: 'small muted' }, 'Personalabteilung · Lindner Bürowelt am Main KG')));
+      add(box, h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn', onclick: function () { window.print(); } }, 'Drucken oder als PDF sichern'),
+        h('button', { type: 'button', class: 'btn sec', onclick: function () { st.fertig = 0; save(); viewToolRefresh(); } }, 'Bearbeiten')));
+      return;
+    }
+    var warn = h('p', { class: 'small', role: 'alert', style: 'color:#B3261E;font-weight:600' });
+    var ta = h('textarea', { rows: 6, 'aria-label': 'Begründung', placeholder: t.ph, oninput: function () { st.text = ta.value; save(); } });
+    ta.value = st.text || '';
+    var eig = h('textarea', { rows: 2, 'aria-label': 'Eigene Bedingungen', placeholder: 'Eigene Bedingung (eine pro Zeile)', oninput: function () { st.eigen = eig.value; save(); } });
+    eig.value = st.eigen;
+    add(box, [h('p', { class: 'sheet-l' }, '1 · Eure Empfehlung'),
+      h('div', { class: 'opts three' }, t.optionen.map(function (o, k) {
+        return h('button', { type: 'button', class: 'opt' + (st.v === k ? ' sel' : ''), onclick: function () { st.v = k; save(); viewToolRefresh(); } }, o);
+      })),
+      st.v === t.mitBedingungen ? [h('p', { class: 'sheet-l' }, '2 · Unter welchen Bedingungen? (mindestens ' + t.minBed + ')'),
+        h('ul', { class: 'checks' }, t.bedingungen.map(function (x, k) {
+          var cb = h('input', { type: 'checkbox', id: 'b' + k, onchange: function () { st.b[k] = cb.checked; save(); } }); cb.checked = !!st.b[k];
+          return h('li', null, h('label', { for: 'b' + k }, cb, h('span', null, x)));
+        })), eig] : null,
+      h('p', { class: 'sheet-l' }, (st.v === t.mitBedingungen ? '3' : '2') + ' · Begründung (mindestens zwei Argumente)'), ta, warn,
+      h('button', { type: 'button', class: 'btn', onclick: function () {
+        var nb = Object.keys(st.b).filter(function (k) { return st.b[k]; }).length + st.eigen.split('\n').filter(function (x) { return x.trim(); }).length;
+        if (st.v == null) { warn.textContent = 'Wählt zuerst eure Empfehlung.'; return; }
+        if (st.v === t.mitBedingungen && nb < t.minBed) { warn.textContent = 'Nennt mindestens ' + t.minBed + ' Bedingungen.'; return; }
+        if ((st.text || '').trim().length < 40) { warn.textContent = 'Die Begründung ist noch zu kurz. Nennt mindestens zwei Argumente.'; return; }
+        st.fertig = 1; save(); setDone('tool', t.id, 0, 0); viewToolRefresh();
+      } }, 'Vorlage fertigstellen')]);
   }
 
   function checkliste(t, box) {
@@ -757,11 +852,16 @@
   /* ---------- Anzeigen-Detektiv ---------- */
   var AGG = [['herkunft', 'Ethnische Herkunft'], ['geschlecht', 'Geschlecht'], ['religion', 'Religion / Weltanschauung'], ['behinderung', 'Behinderung'], ['alter', 'Alter'], ['identitaet', 'Sexuelle Identität']];
   var OTHER = [['profil', 'Passt nicht zum Profil'], ['ok', 'Zulässig']];
-  var CATN = {}; AGG.concat(OTHER).forEach(function (c) { CATN[c[0]] = c[1]; });
+  var EXTRA = [['dsgvo', 'Datenschutz (DSGVO)'], ['blackbox', 'Nicht nachvollziehbar']];
+  var CATN = {}; AGG.concat(OTHER, EXTRA).forEach(function (c) { CATN[c[0]] = c[1]; });
   function isAgg(k) { return AGG.some(function (c) { return c[0] === k; }); }
   function spots(t) { var r = []; t.teile.forEach(function (p) { (p.s || []).forEach(function (s) { r.push(s); }); }); return r; }
 
+  function adHead(t) {
+    return h('div', { class: 'ad-h' }, t.kopf.logo === false ? h('b', { class: 'ad-brand' }, t.kopf.firma) : h('img', { src: 'assets/logo_kurz_farbig.png', alt: '' }), h('span', null, t.kopf.medium));
+  }
   function detektiv(t, box) {
+    var NEU = t.neu || { pflicht: true, titel: 'Deine Neuformulierungen', hinweis: 'Pflicht: Schreib zu jeder Problemstelle, wie es richtig heißen muss. Erst dann kannst du die Prüfung abschließen.', ph: 'So würden wir es schreiben … (Pflicht)', mine: 'Deine Formulierung: ' };
     var st = toolState(t.id); st.m = st.m || {}; st.neu = st.neu || {}; st.tips = st.tips || 0;
     var all = spots(t);
     function save() { st.started = 1; setToolState(t.id, st); }
@@ -780,6 +880,8 @@
           h('div', { class: 'sheet-g' }, AGG.map(function (c) { return h('button', { type: 'button', class: 'opt' + (st.m[i] === c[0] ? ' sel' : ''), onclick: function () { pick(c[0]); } }, c[1]); })),
           h('p', { class: 'sheet-l' }, 'Kein AGG-Verstoß'),
           h('div', { class: 'sheet-g two' }, OTHER.map(function (c) { return h('button', { type: 'button', class: 'opt' + (st.m[i] === c[0] ? ' sel' : ''), onclick: function () { pick(c[0]); } }, c[1]); })),
+          t.extra ? h('p', { class: 'sheet-l' }, 'Anderes Problem') : null,
+          t.extra ? h('div', { class: 'sheet-g two' }, EXTRA.filter(function (c) { return t.extra.indexOf(c[0]) >= 0; }).map(function (c) { return h('button', { type: 'button', class: 'opt' + (st.m[i] === c[0] ? ' sel' : ''), onclick: function () { pick(c[0]); } }, c[1]); })) : null,
           h('div', { class: 'row', style: 'margin-top:10px' }, st.m[i] ? h('button', { type: 'button', class: 'btn ghost', onclick: function () { pick(null); } }, 'Markierung entfernen') : null,
             h('button', { type: 'button', class: 'btn sec', onclick: closeSheet }, 'Abbrechen'))));
       document.body.appendChild(sheet);
@@ -789,7 +891,7 @@
     var ad = h('div', { class: 'ad' });
     function paintAd() {
       ad.textContent = ''; var gi = 0;
-      add(ad, h('div', { class: 'ad-h' }, h('img', { src: 'assets/logo_kurz_farbig.png', alt: '' }), h('span', null, t.kopf.medium)));
+      add(ad, adHead(t));
       t.teile.forEach(function (p) {
         if (!p.s) { add(ad, h(p.h === 'h3' ? 'h3' : 'p', null, p.x)); return; }
         var nodes = p.s.map(function (s) {
@@ -810,10 +912,10 @@
       var bad = marked.filter(function (i) { return st.m[i] !== 'ok'; });
       count.textContent = marked.length ? marked.length + (marked.length === 1 ? ' Stelle markiert' : ' Stellen markiert') + ', davon ' + bad.length + ' als Problem.' : 'Noch nichts markiert. Tippe in der Anzeige auf eine Stelle.';
       if (!bad.length) return;
-      add(list, h('h2', { class: 'h3' }, 'Deine Neuformulierungen'));
-      add(list, h('p', { class: 'small muted' }, 'Pflicht: Schreib zu jeder Problemstelle, wie es richtig heißen muss. Erst dann kannst du die Prüfung abschließen.'));
+      add(list, h('h2', { class: 'h3' }, NEU.titel));
+      add(list, h('p', { class: 'small muted' }, NEU.hinweis));
       bad.forEach(function (i) {
-        var ta = h('textarea', { rows: 2, 'aria-label': 'Neuformulierung für: ' + all[i].x, placeholder: 'So würden wir es schreiben … (Pflicht)', oninput: function () { st.neu[i] = ta.value; save(); if (ta.value.trim().length >= 5) { ta.removeAttribute('data-leer'); ta.style.borderColor = ''; } } });
+        var ta = h('textarea', { rows: 2, 'aria-label': 'Neuformulierung für: ' + all[i].x, placeholder: NEU.ph, oninput: function () { st.neu[i] = ta.value; save(); if (ta.value.trim().length >= 5) { ta.removeAttribute('data-leer'); ta.style.borderColor = ''; } } });
         ta.value = st.neu[i] || '';
         if ((st.neu[i] || '').trim().length < 5) ta.setAttribute('data-leer', '1');
         add(list, h('div', { class: 'rew' }, h('p', null, h('s', null, all[i].x), ' ', h('span', { class: 'pill ' + (st.m[i] === 'profil' ? '' : 'n') }, CATN[st.m[i]])), ta));
@@ -830,7 +932,7 @@
       h('div', { class: 'row', style: 'margin-top:16px' },
         h('button', { type: 'button', class: 'btn', onclick: function () {
           var miss = Object.keys(st.m).filter(function (i) { return st.m[i] !== 'ok' && (st.neu[i] || '').trim().length < 5; }).length;
-          if (miss) {
+          if (miss && NEU.pflicht) {
             warn.textContent = 'Noch nicht fertig: ' + miss + (miss === 1 ? ' Problemstelle hat' : ' Problemstellen haben') + ' noch keine Neuformulierung. Schreib zu jeder Stelle, wie wir es richtig formulieren.';
             var leer = list.querySelectorAll('textarea[data-leer]');
             for (var j = 0; j < leer.length; j++) leer[j].style.borderColor = '#B3261E';
@@ -852,12 +954,13 @@
     return r;
   }
   function detektivResult(t, box, st, all) {
+    var NEU = t.neu || { mine: 'Deine Formulierung: ' };
     var solo = st.show && !st.done, r = score(all, st);
     if (!solo) {
       add(box, h('div', { class: 'score' }, h('b', null, r.right + ' / ' + r.total), h('p', null, 'Problemstellen richtig erkannt' + (r.half ? ', dazu ' + r.half + ' erkannt, aber mit falschem Merkmal' : '') + '.'),
         h('p', { class: 'small muted' }, 'Zulässige Stellen richtig gelassen: ' + r.trapsOk + ' von ' + r.traps + (r.fals ? ' · Fehlalarme: ' + r.fals : ''))));
-    } else add(box, h('p', { class: 'muted' }, 'Auflösung für den Beamer. Rot: AGG-Verstoß · Lila: passt nicht zum Profil · Grün: zulässig.'));
-    var gi = 0, ad = h('div', { class: 'ad solved' }, h('div', { class: 'ad-h' }, h('img', { src: 'assets/logo_kurz_farbig.png', alt: '' }), h('span', null, t.kopf.medium)));
+    } else add(box, h('p', { class: 'muted' }, 'Auflösung für den Beamer. Rot: Verstoß · Lila: passt nicht zum Profil · Grün: zulässig.'));
+    var gi = 0, ad = h('div', { class: 'ad solved' }, adHead(t));
     t.teile.forEach(function (p) {
       if (!p.s) { add(ad, h(p.h === 'h3' ? 'h3' : 'p', null, p.x)); return; }
       var nodes = p.s.map(function (s) {
@@ -878,7 +981,7 @@
         h('p', { class: 'sol-q' }, '„' + s.x + '“'),
         h('p', null, h('b', null, s.k ? CATN[s.k] + (isAgg(s.k) ? ' (Merkmal nach § 1 AGG)' : '') : 'Unauffällige Stelle'), s.p ? ' · ' + s.p : '', verdict ? h('span', { class: 'v v-' + verdict[1] }, verdict[0]) : null),
         s.w ? h('p', null, s.w) : h('p', null, 'Diese Formulierung ist in Ordnung.'),
-        !solo && st.neu[i] ? h('p', { class: 'mine' }, h('b', null, 'Deine Formulierung: '), st.neu[i]) : null,
+        !solo && st.neu[i] ? h('p', { class: 'mine' }, h('b', null, NEU.mine || 'Deine Notiz: '), st.neu[i]) : null,
         s.neu ? h('p', { class: 'sugg' }, h('b', null, 'Ein Vorschlag: '), s.neu) : null));
     });
     add(box, h('div', { class: 'row', style: 'margin-top:14px' },
@@ -1003,7 +1106,7 @@
           d ? h('span', { class: 'pill ' + (d.max && d.pts >= d.max ? 'g' : 'o') }, d.max ? d.pts + ' / ' + d.max : 'geübt') : h('span', { class: 'pill n' }, 'offen')));
       });
     });
-    visibleTools().forEach(function (t) { if (t.typ === 'quiz' || t.typ === 'detektiv') rows.unshift(toolRow(t)); });
+    visibleTools().forEach(function (t) { if (t.typ === 'quiz' || t.typ === 'detektiv' || t.typ === 'dilemma') rows.unshift(toolRow(t)); });
     add(app, [head('Akademie', 'Üben für Schulaufgabe und Abschlussprüfung'),
       h('div', { class: 'stats' },
         h('div', { class: 'stat' }, h('b', null, String(totalPoints())), h('span', null, 'Punkte auf diesem Gerät')),
