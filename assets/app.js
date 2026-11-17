@@ -731,7 +731,7 @@
       add(app, h('div', { class: 'card empty' }, icon('lock'), h('h2', null, 'Erst Level 1 abschließen'), h('p', { class: 'muted' }, 'Level 2 wird frei, sobald du die Prüfung in Level 1 abgeschlossen hast.'), h('a', { class: 'btn', href: '#/tool/' + t.nach }, 'Zu Level 1')));
       return;
     }
-    var box = h('section', { class: 'card' }, h('div', { class: 'kicker' }, t.kicker || (t.typ === 'detektiv' ? 'Werkzeug · Level ' + t.stufe : t.typ === 'quiz' ? 'Prüfungstraining' : t.typ === 'dilemma' ? 'Diskussion' : t.typ === 'vorlage' ? 'Entscheidungsvorlage' : 'Checkliste')), h('h1', { class: 'h2' }, t.titel));
+    var box = h('section', { class: 'card' }, h('div', { class: 'kicker' }, t.kicker || (t.typ === 'detektiv' ? 'Werkzeug · Level ' + t.stufe : t.typ === 'quiz' ? 'Übung' : t.typ === 'dilemma' ? 'Diskussion' : t.typ === 'vorlage' ? 'Entscheidungsvorlage' : 'Checkliste')), h('h1', { class: 'h2' }, t.titel));
     add(app, box);
     if (t.typ === 'detektiv') detektiv(t, box);
     else if (t.typ === 'quiz') { add(box, h('p', { class: 'muted' }, t.kurz)); RENDER.quiz(t, box, function (pts, max) { setDone('tool', t.id, pts, max); }); }
@@ -1114,7 +1114,7 @@
         h('div', { class: 'stat' }, h('b', null, String(bundle.glossary.length)), h('span', null, 'Fachbegriffe im Wiki'))),
       section('Unser Weg durch ' + bundle.short, null, h('div', { class: 'card' }, h('p', { class: 'muted small' }, bundle.title),
         h('ol', { class: 'road' }, bundle.road.map(function (r) { return h('li', { class: r.s || null }, (r.s === 'done' ? '✓ ' : '') + r.t); })))),
-      section('Prüfungstraining', null, h('div', { class: 'card list' }, rows.length ? rows : h('p', { class: 'muted' }, 'Übungen erscheinen hier mit deinen Aufträgen.'),
+      section('Übungen', null, h('div', { class: 'card list' }, rows.length ? rows : h('p', { class: 'muted' }, 'Übungen erscheinen hier mit deinen Aufträgen.'),
         h('a', { class: 'lrow', href: '#/wissen/karten' }, h('span', { class: 'lrow-i' }, icon('cards')), h('span', { class: 'lrow-t' }, h('b', null, 'Lernkarten'), h('span', null, 'Fachbegriffe wiederholen')), icon('chevron')))),
       h('p', { class: 'small muted' }, 'Dein Lernstand wird nicht übertragen. Er liegt nur im Browser dieses Geräts.')]);
   }

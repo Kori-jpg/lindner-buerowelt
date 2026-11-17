@@ -1,5 +1,5 @@
 /* LindnerNet Offline-Modus: speichert die Seite nach dem ersten Laden auf dem Gerät. Keine Daten werden gesendet. */
-var V = 'lindnernet-d8b63b998ba7';
+var V = 'lindnernet-4fcbac6b73df';
 var FILES = ["./","index.html","assets/app.js","assets/style.css","assets/firmensitz.svg","assets/logo_farbig.png","assets/logo_kurz_farbig.png","assets/logo_kurz_weiss.png","assets/logo_weiss.png","content/lf7.enc.json","content/lf8-1.enc.json","content/lf8-2.enc.json","content/lf8-3.enc.json","content/lf8-l.enc.json","content/lf8.enc.json"];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(V).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
