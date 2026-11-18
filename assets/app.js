@@ -865,6 +865,7 @@
     var st = toolState(t.id); st.m = st.m || {}; st.neu = st.neu || {}; st.tips = st.tips || 0;
     var all = spots(t);
     function save() { st.started = 1; setToolState(t.id, st); }
+    if (st.papier && !st.zeig && !st.show) { papierDone(t, box, st); return; }
     if (st.done || st.show) { detektivResult(t, box, st, all); return; }
     add(box, h('p', null, t.auftrag));
 
@@ -942,6 +943,25 @@
           st.done = 1; save(); var r = score(all, st); setDone('tool', t.id, r.right, r.total); viewToolRefresh();
         } }, 'Prüfung abschließen'),
         bundle.lehrer ? h('button', { type: 'button', class: 'btn sec', onclick: function () { st.show = 1; setToolState(t.id, st); viewToolRefresh(); } }, 'Auflösung zeigen (Lehrkraft)') : null)]);
+    if (t.papier) {
+      var pin = h('input', { type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Code', 'aria-label': 'Code für Papier-Bearbeitung' });
+      var pmsg = h('div', { role: 'status', 'aria-live': 'polite' });
+      add(box, h('section', { class: 'codebox', style: 'margin-top:22px' }, icon('file'),
+        h('div', null, h('b', null, 'Schon auf Papier geprüft?'), h('span', null, t.papier.text || 'Wenn eure Lehrkraft euer Arbeitsblatt abgehakt hat, bekommt ihr einen Code. Damit geht es hier direkt weiter.'),
+          h('form', { class: 'code-form', onsubmit: function (e) {
+            e.preventDefault(); pmsg.textContent = '';
+            if (normCode(pin.value) !== normCode(t.papier.code)) { add(pmsg, h('p', { class: 'msg bad' }, 'Dieser Code passt nicht. Fragt eure Lehrkraft.')); return; }
+            st.done = 1; st.papier = 1; save(); setDone('tool', t.id, 0, 0); viewToolRefresh();
+          } }, pin, h('button', { class: 'btn', type: 'submit' }, 'Weiter')), pmsg)));
+    }
+  }
+  function papierDone(t, box, st) {
+    var next = (bundle.tools || []).filter(function (x) { return x.nach === t.id; })[0];
+    add(box, h('div', { class: 'score' }, h('b', null, '✓'), h('p', null, 'Auf Papier geprüft. Diese Anzeige ist für euch erledigt.')));
+    add(box, h('div', { class: 'row', style: 'margin-top:14px' },
+      next ? h('a', { class: 'btn', href: '#/tool/' + next.id }, 'Weiter zu ' + (next.stufe ? 'Level ' + next.stufe : next.titel)) : null,
+      h('button', { type: 'button', class: 'btn sec', onclick: function () { st.zeig = 1; setToolState(t.id, st); viewToolRefresh(); } }, 'Lösung zum Vergleichen ansehen'),
+      h('button', { type: 'button', class: 'btn ghost', onclick: function () { setToolState(t.id, {}); viewToolRefresh(); } }, 'Doch digital prüfen')));
   }
   function score(all, st) {
     var r = { right: 0, half: 0, total: 0, traps: 0, trapsOk: 0, fals: 0 };
@@ -955,11 +975,11 @@
   }
   function detektivResult(t, box, st, all) {
     var NEU = t.neu || { mine: 'Deine Formulierung: ' };
-    var solo = st.show && !st.done, r = score(all, st);
+    var solo = (st.show && !st.done) || st.papier, r = score(all, st);
     if (!solo) {
       add(box, h('div', { class: 'score' }, h('b', null, r.right + ' / ' + r.total), h('p', null, 'Problemstellen richtig erkannt' + (r.half ? ', dazu ' + r.half + ' erkannt, aber mit falschem Merkmal' : '') + '.'),
         h('p', { class: 'small muted' }, 'Zulässige Stellen richtig gelassen: ' + r.trapsOk + ' von ' + r.traps + (r.fals ? ' · Fehlalarme: ' + r.fals : ''))));
-    } else add(box, h('p', { class: 'muted' }, 'Auflösung für den Beamer. Rot: Verstoß · Lila: passt nicht zum Profil · Grün: zulässig.'));
+    } else add(box, h('p', { class: 'muted' }, (st.papier ? 'Lösung zum Vergleichen mit eurem Arbeitsblatt. ' : 'Auflösung für den Beamer. ') + 'Rot: Verstoß · Lila: passt nicht zum Profil · Grün: zulässig.'));
     var gi = 0, ad = h('div', { class: 'ad solved' }, adHead(t));
     t.teile.forEach(function (p) {
       if (!p.s) { add(ad, h(p.h === 'h3' ? 'h3' : 'p', null, p.x)); return; }
@@ -985,7 +1005,7 @@
         s.neu ? h('p', { class: 'sugg' }, h('b', null, 'Ein Vorschlag: '), s.neu) : null));
     });
     add(box, h('div', { class: 'row', style: 'margin-top:14px' },
-      h('button', { type: 'button', class: 'btn sec', onclick: function () { if (solo || confirm('Neu anfangen? Deine Markierungen und Formulierungen werden gelöscht.')) { setToolState(t.id, {}); viewToolRefresh(); } } }, solo ? 'Auflösung schließen' : 'Noch einmal prüfen'),
+      h('button', { type: 'button', class: 'btn sec', onclick: function () { if (st.papier) { st.zeig = 0; setToolState(t.id, st); viewToolRefresh(); return; } if (solo || confirm('Neu anfangen? Deine Markierungen und Formulierungen werden gelöscht.')) { setToolState(t.id, {}); viewToolRefresh(); } } }, solo ? 'Lösung schließen' : 'Noch einmal prüfen'),
       t.id === 'detektiv1' && toolDef('detektiv2') && !solo ? h('a', { class: 'btn', href: '#/tool/detektiv2' }, 'Weiter zu Level 2') : null));
   }
 
