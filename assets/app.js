@@ -1,9 +1,8 @@
 /* LindnerNet – Intranet der Lindner Bürowelt am Main KG (Modellunternehmen für den Unterricht).
-   Keine Konten, kein Tracking: Lernstand bleibt im Browser. Inhalte werden erst mit dem Klassencode entschlüsselt. */
+   Keine Konten, kein Tracking: Kürzel und Lernstand bleiben im Browser. Inhalte werden erst mit dem Code der Stunde entschlüsselt. */
 (function () {
   'use strict';
 
-  var BUNDLES = ['lf7', 'lf8'];
   var app = document.getElementById('app');
   var side = document.getElementById('side');
   var topbar = document.getElementById('topbar');
@@ -108,21 +107,56 @@
       return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(enc.iv) }, key, b64(enc.ct));
     }).then(function (buf) { return JSON.parse(new TextDecoder().decode(buf)); });
   }
-  function unlock(code) {
-    var i = 0;
-    function next() {
-      if (i >= BUNDLES.length) return Promise.resolve(null);
-      var id = BUNDLES[i++];
-      return fetch('content/' + id + '.enc.json', { cache: 'no-cache' })
-        .then(function (r) { if (!r.ok) throw new Error('fetch'); return r.json(); })
-        .then(function (enc) { return decrypt(enc, code); })
-        .then(function (data) { return data; }, function () { return next(); });
-    }
-    return next();
+  function deriveKey(code, salt, iter) {
+    return crypto.subtle.importKey('raw', new TextEncoder().encode(normCode(code)), 'PBKDF2', false, ['deriveKey']).then(function (base) {
+      return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(salt), iterations: iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    });
   }
-  function setBundle(data) {
+  function gcmOpen(key, box) { return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(box.iv) }, key, b64(box.ct)).then(function (buf) { return JSON.parse(new TextDecoder().decode(buf)); }); }
+  var LOGIN = null;
+  function loginFile() {
+    if (LOGIN) return Promise.resolve(LOGIN);
+    return fetch('content/lf8.enc.json', { cache: 'no-cache' }).then(function (r) { if (!r.ok) throw new Error('fetch'); return r.json(); }).then(function (e) { LOGIN = e; return e; });
+  }
+  /* Prüft einen Code gegen alle Fächer der Anmeldedatei. Ergebnis: { k, units } oder null */
+  function openSlot(code) {
+    return loginFile().then(function (enc) {
+      return deriveKey(code, enc.salt, enc.iter).then(function (key) {
+        var i = 0;
+        function next() { if (i >= enc.slots.length) return null; return gcmOpen(key, enc.slots[i++]).then(null, next); }
+        return next();
+      });
+    });
+  }
+  /* Anmeldung: Code öffnet ein Fach, das Fach den Grundinhalt. Ergebnis: { data, units } oder null */
+  function unlock(code) {
+    return openSlot(code).then(function (slot) {
+      if (!slot) return null;
+      return crypto.subtle.importKey('raw', b64(slot.k), 'AES-GCM', false, ['decrypt'])
+        .then(function (key) { return gcmOpen(key, LOGIN); })
+        .then(function (data) { return { data: data, units: slot.units || [] }; });
+    }).then(null, function () { return null; });
+  }
+  function normUser(k) { return String(k || '').toUpperCase().replace(/[^A-ZÄÖÜ]/g, ''); }
+  /* Früheren Lernstand (vor dem Kürzel-Login) einmalig auf das erste Kürzel dieses Geräts übernehmen */
+  function migrate(id) {
+    if (LS.get('ln_migr8', 0)) return;
+    try {
+      var keys = [];
+      for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (/lf8(?=_|$)/.test(k) && k.indexOf('@') < 0) keys.push(k); }
+      keys.forEach(function (k) { var n = k.replace(/lf8(?=_|$)/, id); if (localStorage.getItem(n) == null) localStorage.setItem(n, localStorage.getItem(k)); localStorage.removeItem(k); });
+    } catch (e) { /* egal */ }
+    LS.set('ln_migr8', 1);
+  }
+  function addUnits(list) {
+    var l = LS.get(ckey(), []);
+    (list || []).forEach(function (u) { if (!l.some(function (x) { return x.f === u.f; })) l.push({ c: u.c, f: u.f }); });
+    LS.set(ckey(), l);
+  }
+  function setBundle(data, user) {
     bundle = data; SH = data ? data.shared : null;
     if (!data) return;
+    bundle.kuerzel = user; bundle.id = 'lf8@' + user;
     ['mails', 'chat', 'ablage', 'tools', 'news', 'termine', 'units'].forEach(function (k) { if (!bundle[k]) bundle[k] = []; });
     bundle._applied = {};
   }
@@ -190,7 +224,7 @@
     document.body.className = bundle ? '' : 'anon';
     if (!bundle) {
       add(foot, [h('p', null, 'LindnerNet ist ein Lernangebot zum Unterricht. Die Lindner Bürowelt am Main KG ist ein Modellunternehmen: Alle Namen, Personen und Daten sind frei erfunden.'),
-        h('p', null, 'Diese Seite braucht keinen Namen und kein Konto und speichert keine persönlichen Daten.')]);
+        h('p', null, 'Diese Seite braucht keinen Namen und kein Konto. Dein Kürzel bleibt nur auf diesem Gerät.')]);
       return;
     }
     add(side, [
@@ -201,7 +235,7 @@
     add(topbar, [
       h('a', { class: 'top-logo', href: '#/', 'aria-label': 'LindnerNet Startseite' }, h('img', { src: 'assets/logo_kurz_weiss.png', alt: '' })),
       searchForm(q),
-      h('a', { class: 'me', href: '#/ich', 'aria-label': 'Mein Profil: ' + bundle.user.stelle }, h('span', { class: 'me-t' }, h('b', null, bundle.user.stelle), h('span', null, abt(bundle.user.abt).name)), h('span', { class: 'av a-' + bundle.user.abt }, bundle.user.kurz))
+      h('a', { class: 'me', href: '#/ich', 'aria-label': 'Mein Profil: ' + bundle.user.stelle }, h('span', { class: 'me-t' }, h('b', null, bundle.user.stelle), h('span', null, abt(bundle.user.abt).name)), h('span', { class: 'av a-' + bundle.user.abt }, bundle.kuerzel))
     ]);
     add(tabs, navLinks(sec, true));
     add(foot, [h('p', null, 'LindnerNet · Modellunternehmen für den Unterricht. Alle Namen, Personen und Daten sind frei erfunden.'),
@@ -250,27 +284,37 @@
   function head(title, sub) { return h('div', { class: 'phead' }, h('h1', null, title), sub ? h('p', { class: 'muted' }, sub) : null); }
 
   /* ---------- Anmeldung ---------- */
+  var UEBUNGSCODE = 'UEBEN';
   function viewLogin() {
-    var input = h('input', { type: 'text', name: 'code', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Zugangscode', 'aria-label': 'Zugangscode', required: true });
+    var user = h('input', { type: 'text', name: 'username', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', maxlength: '3', placeholder: 'z. B. ABC', 'aria-label': 'Benutzername: dein Kürzel aus drei Buchstaben', required: true, value: LS.get('lb_user', '') || null });
+    var input = h('input', { type: 'text', name: 'code', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Code der Stunde', 'aria-label': 'Passwort: Code der Stunde', required: true });
     var msg = h('div', { role: 'status', 'aria-live': 'polite' });
     var btn = h('button', { class: 'btn', type: 'submit' }, 'Anmelden');
-    var form = h('form', { class: 'code-form', onsubmit: function (e) {
+    function bad(t) { msg.textContent = ''; add(msg, h('p', { class: 'msg bad' }, t)); }
+    var form = h('form', { class: 'login-form', onsubmit: function (e) {
       e.preventDefault();
-      if (!window.crypto || !crypto.subtle) { msg.textContent = ''; add(msg, h('p', { class: 'msg bad' }, 'Dieser Browser kann LindnerNet nicht öffnen. Bitte nutze einen aktuellen Browser und die Adresse mit https.')); return; }
+      var k = normUser(user.value);
+      if (k.length !== 3) { bad('Dein Benutzername ist ein Kürzel aus genau drei Buchstaben, zum Beispiel ABC.'); user.focus(); return; }
+      if (!window.crypto || !crypto.subtle) { bad('Dieser Browser kann LindnerNet nicht öffnen. Bitte nutze einen aktuellen Browser und die Adresse mit https.'); return; }
       btn.disabled = true; btn.textContent = 'Prüfe …'; msg.textContent = '';
-      unlock(input.value).then(function (data) {
+      unlock(input.value).then(function (r) {
         btn.disabled = false; btn.textContent = 'Anmelden';
-        if (!data) { add(msg, h('p', { class: 'msg bad' }, 'Dieser Code passt nicht. Bitte prüfe die Schreibweise oder frage deine Lehrkraft.')); return; }
-        setBundle(data); LS.set('lb_code', normCode(input.value)); location.hash = '#/'; loadUnits().then(go);
+        if (!r) { bad('Dieser Code passt nicht. Bitte prüfe die Schreibweise oder frage deine Lehrkraft.'); return; }
+        setBundle(r.data, k); migrate(bundle.id); addUnits(r.units);
+        LS.set('lb_user', k); LS.set('lb_code', normCode(input.value)); location.hash = '#/'; loadUnits().then(go);
       });
-    } }, input, btn);
+    } },
+      h('label', { class: 'fld' }, h('span', null, 'Benutzername'), user, h('small', null, 'Dein Kürzel aus drei Buchstaben. Kein echter Name nötig.')),
+      h('label', { class: 'fld' }, h('span', null, 'Passwort'), input, h('small', null, 'Den Code der Stunde bekommst du von deiner Lehrkraft.')),
+      btn);
     add(app, h('div', { class: 'login' },
       h('img', { class: 'login-logo', src: 'assets/logo_weiss.png', alt: 'Lindner Bürowelt am Main KG' }),
       h('div', { class: 'login-card' },
         h('div', { class: 'kicker' }, 'Intranet'), h('h1', null, 'LindnerNet'),
-        h('p', { class: 'muted' }, 'Melde dich mit dem Zugangscode deiner Klasse an. Du brauchst keinen Namen und kein Konto.'),
-        form, msg,
-        h('p', { class: 'small muted', style: 'margin:14px 0 0' }, 'Den Code bekommst du von deiner Lehrkraft.'))));
+        form, msg),
+      h('div', { class: 'login-ueben' }, icon('key'),
+        h('div', null, h('b', null, 'Nur üben?'), h('span', null, 'Mit dem Code ', h('code', null, UEBUNGSCODE), ' kommst du jederzeit zu den Übungen.')),
+        h('button', { class: 'btn sec', type: 'button', onclick: function () { input.value = UEBUNGSCODE; (user.value ? btn : user).focus(); } }, 'Einsetzen'))));
   }
 
   /* ---------- Bausteine ---------- */
@@ -343,6 +387,7 @@
     var hr = new Date().getHours(), gruss = hr < 11 ? 'Guten Morgen!' : hr < 17 ? 'Guten Tag!' : 'Guten Abend!';
     var open = inbox().filter(function (x) { return x.neu; }), chef = person(bundle.user.chef), gfp = person(SH.gf.von);
     var heute = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    add(app, codeBox());
     add(app, h('section', { class: 'greet' },
       h('div', null, h('p', { class: 'greet-d' }, heute), h('h1', null, gruss),
         h('p', null, open.length ? (open.length === 1 ? 'Du hast 1 neue Nachricht oder offenen Auftrag.' : 'Du hast ' + open.length + ' neue Nachrichten und offene Aufträge.') : 'Alles erledigt. Stark!', ' ', bundle.user.hinweis)),
@@ -350,7 +395,6 @@
         return h('a', { href: x.href }, icon('mail'), h('span', null, h('b', null, x.betreff), h('span', null, 'von ' + (x.von ? pname(person(x.von)) : pname(chef)))), icon('chevron'));
       })) : null));
     if (unreadChat()) add(app, h('a', { class: 'chatping', href: '#/app/chat' }, avatar(person(bundle.chat[0].mit), 'sm'), h('span', null, h('b', null, pname(person(bundle.chat[0].mit)) + ' im Chat'), h('span', null, lastMsg().x)), h('span', { class: 'badge' }, String(unreadChat()))));
-    add(app, codeBox());
 
     if (!LS.get('ln_tour', 0)) {
       var tour = h('section', { class: 'tour' }, h('h2', null, 'Neu im LindnerNet? So findest du dich zurecht'),
@@ -608,25 +652,26 @@
     LS.del('ln_beamer'); location.hash = '#/'; location.reload();
   }
   function codeBox() {
-    if (!unitFiles().length) return null;
-    var input = h('input', { type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Code', 'aria-label': 'Code von der Lehrkraft' });
+    var input = h('input', { type: 'text', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: 'Code', 'aria-label': 'Code der heutigen Stunde' });
     var msg = h('div', { role: 'status', 'aria-live': 'polite' }), btn = h('button', { class: 'btn', type: 'submit' }, 'Freischalten');
     return h('section', { class: 'codebox' }, icon('key'),
-      h('div', null, h('b', null, 'Code von der Lehrkraft?'), h('span', null, 'Damit kommen neue Nachrichten und Aufgaben ins LindnerNet.'),
+      h('div', null, h('b', null, 'Code der heutigen Stunde'), h('span', null, 'Gib hier den Code ein, den deine Lehrkraft nennt. Dann kommen die Nachrichten und Aufgaben der Stunde dazu.'),
         h('form', { class: 'code-form', onsubmit: function (e) {
           e.preventDefault(); var c = normCode(input.value); if (!c) return;
           msg.textContent = '';
-          if (LS.get(ckey(), []).some(function (x) { return x.c === c; })) { add(msg, h('p', { class: 'msg ok' }, 'Dieser Code ist schon freigeschaltet.')); return; }
           btn.disabled = true; btn.textContent = 'Prüfe …';
-          tryCode(c, unitFiles()).then(function (r) {
+          openSlot(c).then(null, function () { return null; }).then(function (r) {
             btn.disabled = false; btn.textContent = 'Freischalten';
             if (!r) { add(msg, h('p', { class: 'msg bad' }, 'Dieser Code passt nicht. Prüfe die Schreibweise.')); return; }
-            var l = LS.get(ckey(), []); l.push({ c: c, f: r.f }); LS.set(ckey(), l);
-            applyData(r.d);
-            location.hash = r.d.lehrer ? '#/arbeitsplatz' : '#/postfach'; go();
+            var have = LS.get(ckey(), []), neu = (r.units || []).filter(function (u) { return !have.some(function (x) { return x.f === u.f; }); });
+            if (!neu.length) { add(msg, h('p', { class: 'msg ok' }, 'Dieser Code ist schon freigeschaltet.')); return; }
+            addUnits(neu);
+            var lehrer = neu.some(function (u) { return u.f === bundle.lehrerFile; });
+            loadUnits().then(function () { location.hash = lehrer ? '#/arbeitsplatz' : '#/postfach'; go(); });
           });
         } }, input, btn), msg));
   }
+
 
   /* ---------- Postfach: Mails und Aufträge ---------- */
   function seen(kind) { return LS.get('ln_' + kind + '_' + bundle.id, {}); }
@@ -1159,16 +1204,16 @@
   }
 
   /* ---------- Profil und Datenschutz ---------- */
-  function logout() { LS.del('lb_code'); setBundle(null); location.hash = '#/'; go(); }
+  function logout() { LS.del('lb_code'); LS.del('lb_user'); setBundle(null); location.hash = '#/'; go(); }
   function viewIch() {
     var chef = person(bundle.user.chef);
     add(app, [head('Mein Profil'),
-      h('div', { class: 'card profile' }, h('span', { class: 'av xl a-' + bundle.user.abt }, bundle.user.kurz),
+      h('div', { class: 'card profile' }, h('span', { class: 'av xl a-' + bundle.user.abt }, bundle.kuerzel),
         h('div', null, h('h1', null, bundle.user.stelle), h('p', { class: 'muted' }, bundle.user.hinweis)),
         h('dl', { class: 'facts' },
           h('div', null, h('dt', null, 'Abteilung'), h('dd', null, abt(bundle.user.abt).name)),
           h('div', null, h('dt', null, 'Vorgesetzt'), h('dd', null, h('a', { href: '#/person/' + chef.nr }, pname(chef)))),
-          h('div', null, h('dt', null, 'Zugang'), h('dd', null, bundle.short + ' · ohne Namen, ohne Konto')))),
+          h('div', null, h('dt', null, 'Zugang'), h('dd', null, 'Kürzel ' + bundle.kuerzel + ' · ohne Namen, ohne Konto')))),
       h('div', { class: 'card' }, h('h2', null, 'Dieses Gerät'),
         h('p', { class: 'muted' }, 'Dein Lernstand und deine Notizen liegen nur im Browser dieses Geräts. Niemand sonst kann sie sehen, auch deine Lehrkraft nicht.'),
         h('div', { class: 'row' },
@@ -1182,10 +1227,10 @@
       h('div', { class: 'card' }, h('h2', null, 'Was nicht gespeichert wird'),
         ul(['Kein Name, keine E-Mail-Adresse, kein Konto.', 'Keine Auswertung, wer was wann anklickt. Es gibt kein Tracking und keine Werbung.', 'Deine Antworten und Notizen werden nicht gesendet. Auch deine Lehrkraft sieht sie nicht.'])),
       h('div', { class: 'card' }, h('h2', null, 'Was auf deinem Gerät liegt'),
-        ul(['Der Zugangscode deiner Klasse, damit du dich nicht jedes Mal neu anmelden musst.', 'Dein Lernstand, deine Punkte und deine Notizen.', 'Mit „Abmelden“ und „Lernstand löschen“ unter „Mein Profil“ entfernst du alles wieder.']),
+        ul(['Dein Kürzel und der letzte Code, damit du dich nicht jedes Mal neu anmelden musst. Das Kürzel wird nirgendwohin gesendet.', 'Dein Lernstand, deine Punkte und deine Notizen.', 'Mit „Abmelden“ und „Lernstand löschen“ unter „Mein Profil“ entfernst du alles wieder.']),
         h('a', { class: 'btn sec', href: '#/ich' }, 'Mein Profil öffnen')),
       h('div', { class: 'card' }, h('h2', null, 'Technik'),
-        h('p', null, 'Die Seite liegt bei GitHub Pages. Wie bei jeder Website verarbeitet der Anbieter beim Abruf technische Daten wie die IP-Adresse. Die Inhalte sind verschlüsselt und werden erst mit dem Zugangscode auf deinem Gerät lesbar.')),
+        h('p', null, 'Die Seite liegt bei GitHub Pages. Wie bei jeder Website verarbeitet der Anbieter beim Abruf technische Daten wie die IP-Adresse. Die Inhalte sind verschlüsselt und werden erst mit dem Code der Stunde auf deinem Gerät lesbar.')),
       h('div', { class: 'card' }, h('h2', null, 'Wie im echten Betrieb'),
         h('p', null, 'Auch im LindnerNet gilt: Jede Rolle sieht nur, was sie für ihre Arbeit braucht. Im Personenverzeichnis stehen deshalb nur dienstliche Angaben, und bei Abwesenheiten steht kein Grund.'))]);
   }
@@ -1193,8 +1238,8 @@
   /* ---------- Los ---------- */
   window.addEventListener('hashchange', go);
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(function () { /* ohne Offline-Modus weiter */ });
-  var saved = LS.get('lb_code', null);
-  if (saved && window.crypto && crypto.subtle) {
-    unlock(saved).then(function (data) { if (data) { setBundle(data); return loadUnits().then(go); } LS.del('lb_code'); go(); }, function () { go(); });
+  var saved = LS.get('lb_code', null), savedUser = normUser(LS.get('lb_user', ''));
+  if (saved && savedUser.length === 3 && window.crypto && crypto.subtle) {
+    unlock(saved).then(function (r) { if (r) { setBundle(r.data, savedUser); return loadUnits().then(go); } LS.del('lb_code'); go(); }, function () { go(); });
   } else go();
 })();
